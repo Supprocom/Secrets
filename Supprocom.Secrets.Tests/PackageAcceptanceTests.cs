@@ -82,7 +82,7 @@ public sealed class PackageAcceptanceTests
 
         ProcessResult run = RunProcess(
             "dotnet",
-            "PackageConsumer.dll",
+            "Consumer.dll",
             Path.Combine(consumer, "bin", "Release", "net10.0", "publish"),
             environment: new Dictionary<string, string> { ["DOTNET_ENVIRONMENT"] = "Development" });
         Assert.That(run.StandardOutput, Does.Contain("base|overlay"));
@@ -109,7 +109,7 @@ public sealed class PackageAcceptanceTests
         string replacementPublish = Path.Combine(replacement, "bin", "Release", "net10.0", "publish");
         ProcessResult replacementRun = RunProcess(
             "dotnet",
-            "PackageConsumer.dll",
+            "Consumer.dll",
             replacementPublish,
             environment: new Dictionary<string, string> { ["DOTNET_ENVIRONMENT"] = "Development" });
         Assert.That(replacementRun.StandardOutput, Does.Contain("replacement"));
@@ -153,7 +153,7 @@ public sealed class PackageAcceptanceTests
             <configuration>
               <packageSources>
                 <clear />
-                <add key="verification" value="{{packagePath}}" />
+                <add key="verification" value="{{Path.GetDirectoryName(packagePath)!}}" />
                 <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
               </packageSources>
             </configuration>
@@ -167,7 +167,7 @@ public sealed class PackageAcceptanceTests
             IConfiguration configuration = new ConfigurationBuilder()
                 .AddSupprocomSecrets()
                 .Build();
-            Console.WriteLine($"{configuration[\"Smoke:Base\"]}|{configuration[\"Smoke:Overlay\"]}|{configuration[\"Smoke:Mode\"]}");
+            Console.WriteLine($"{configuration["Smoke:Base"]}|{configuration["Smoke:Overlay"]}|{configuration["Smoke:Mode"]}");
             """,
             encoding: new UTF8Encoding(false));
     }
