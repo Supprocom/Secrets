@@ -779,13 +779,21 @@ internal sealed class SecretFileRuntime
         JsonNode? current = root;
         for (int index = 0; index < segments.Length - 1; index++)
         {
-            current = current switch
+            if (current is JsonObject objectNode)
             {
-                JsonObject objectNode => objectNode[segments[index]],
-                JsonArray arrayNode when int.TryParse(segments[index], out int arrayIndex) &&
-                    arrayIndex >= 0 && arrayIndex < arrayNode.Count => arrayNode[arrayIndex],
-                _ => null
-            };
+                if (!TryGetJsonProperty(objectNode, segments[index], out _, out current))
+                    return false;
+            }
+            else if (current is JsonArray arrayNode &&
+                     int.TryParse(segments[index], out int arrayIndex) &&
+                     arrayIndex >= 0 && arrayIndex < arrayNode.Count)
+            {
+                current = arrayNode[arrayIndex];
+            }
+            else
+            {
+                return false;
+            }
 
             if (current is null)
                 return false;
@@ -794,11 +802,11 @@ internal sealed class SecretFileRuntime
         string leaf = segments[^1];
         switch (current)
         {
-            case JsonObject objectNode when objectNode.ContainsKey(leaf):
+            case JsonObject objectNode when TryGetJsonProperty(objectNode, leaf, out string propertyName, out _):
                 if (delete)
-                    objectNode.Remove(leaf);
+                    objectNode.Remove(propertyName);
                 else
-                    objectNode[leaf] = JsonValue.Create(value);
+                    objectNode[propertyName] = JsonValue.Create(value);
                 return true;
             case JsonArray arrayNode when int.TryParse(leaf, out int arrayIndex) &&
                 arrayIndex >= 0 && arrayIndex < arrayNode.Count:
@@ -810,6 +818,27 @@ internal sealed class SecretFileRuntime
             default:
                 return false;
         }
+    }
+
+    private static bool TryGetJsonProperty(
+        JsonObject objectNode,
+        string name,
+        out string propertyName,
+        out JsonNode? value)
+    {
+        foreach (KeyValuePair<string, JsonNode?> property in objectNode)
+        {
+            if (property.Key.Equals(name, StringComparison.OrdinalIgnoreCase))
+            {
+                propertyName = property.Key;
+                value = property.Value;
+                return true;
+            }
+        }
+
+        propertyName = string.Empty;
+        value = null;
+        return false;
     }
 
     private static string NormalizeMutationKey(string key)

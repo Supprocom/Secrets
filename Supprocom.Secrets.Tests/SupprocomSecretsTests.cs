@@ -338,10 +338,10 @@ public sealed class SupprocomSecretsTests
             """);
 
         var store = new SupprocomSecretFileStore(new SupprocomSecretFileOptions { Directory = directory.Path });
-        await store.SetAsync("Nested:Value", "after");
+        await store.SetAsync("nested:value", "after");
         AssertLocalJsonTypes(directory.Path, expectedNestedValue: "after");
 
-        await store.DeleteAsync("Nested:Value");
+        await store.DeleteAsync("NESTED:VALUE");
         AssertLocalJsonTypes(directory.Path, expectedNestedValue: null);
     }
 
