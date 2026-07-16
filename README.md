@@ -1,0 +1,1 @@
+Supprocom.Secrets is a portable environment loader for secrets and installation-local options. It uses ordinary `.env` files out of the box while allowing the same application code to select an external secret provider when needed.
