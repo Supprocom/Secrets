@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Reflection;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Supprocom.Secrets;
@@ -88,7 +89,7 @@ internal sealed class SupprocomSecretsConfigurationProvider : ConfigurationProvi
     {
         try
         {
-            Data = LoadDataAsync(CancellationToken.None).GetAwaiter().GetResult();
+            Data = LoadDataAsync(_options.StartupCancellationToken).GetAwaiter().GetResult();
         }
         catch (SupprocomSecretsException)
         {
@@ -168,6 +169,10 @@ internal sealed class SupprocomSecretsConfigurationProvider : ConfigurationProvi
                 "ProviderTimeout",
                 $"Provider '{source.Scheme}' timed out while opening '{label}'.");
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception exception)
         {
             throw ProviderFailure("ProviderOpenFailed", source, label, exception);
@@ -182,6 +187,10 @@ internal sealed class SupprocomSecretsConfigurationProvider : ConfigurationProvi
             throw new SupprocomSecretsException(
                 "ProviderTimeout",
                 $"Provider '{source.Scheme}' timed out while loading '{label}'.");
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception exception)
         {
@@ -315,23 +324,33 @@ internal static class ProviderResolver
                         $"Provider manifest '{path}' contains a duplicate or empty provider scheme.");
                 }
 
-                Type? providerType = Type.GetType($"{typeName}, {assemblyName}", throwOnError: false);
+                Type? providerType;
+                try
+                {
+                    providerType = Type.GetType($"{typeName}, {assemblyName}", throwOnError: false);
+                }
+                catch (Exception exception) when (
+                    exception is ArgumentException or TypeLoadException or FileLoadException or
+                    FileNotFoundException or BadImageFormatException)
+                {
+                    throw new SupprocomSecretsException(
+                        "ProviderAssemblyLoadFailed",
+                        $"Provider manifest '{path}' could not load its declared provider assembly.");
+                }
                 if (providerType is null)
                 {
                     try
                     {
-                        providerType = Type.GetType(
-                            $"{typeName}, {assemblyName}",
-                            assemblyResolver: name => AssemblyLoader.Load(name),
-                            typeResolver: null,
-                            throwOnError: false);
+                        providerType = Assembly.Load(new AssemblyName(assemblyName))
+                            .GetType(typeName, throwOnError: false, ignoreCase: false);
                     }
-                    catch (Exception exception) when (exception is FileLoadException or FileNotFoundException or BadImageFormatException)
+                    catch (Exception exception) when (
+                        exception is FileLoadException or FileNotFoundException or BadImageFormatException or
+                        TypeLoadException)
                     {
                         throw new SupprocomSecretsException(
                             "ProviderAssemblyLoadFailed",
-                            $"Provider manifest '{path}' could not load its declared provider assembly.",
-                            exception);
+                            $"Provider manifest '{path}' could not load its declared provider assembly.");
                     }
                 }
 
@@ -342,7 +361,25 @@ internal static class ProviderResolver
                         $"Provider manifest '{path}' names a type that is not an ISecretStoreProvider.");
                 }
 
-                if (Activator.CreateInstance(providerType) is not ISecretStoreProvider provider)
+                ISecretStoreProvider provider;
+                try
+                {
+                    if (Activator.CreateInstance(providerType) is not ISecretStoreProvider instance)
+                    {
+                        throw new SupprocomSecretsException(
+                            "ProviderInstantiationFailed",
+                            $"Provider manifest '{path}' names a provider that cannot be constructed.");
+                    }
+
+                    provider = instance;
+                }
+                catch (SupprocomSecretsException)
+                {
+                    throw;
+                }
+                catch (Exception exception) when (
+                    exception is MissingMethodException or MemberAccessException or TargetInvocationException or
+                    InvalidOperationException or TypeLoadException)
                 {
                     throw new SupprocomSecretsException(
                         "ProviderInstantiationFailed",
@@ -361,18 +398,23 @@ internal static class ProviderResolver
 
             return providers;
         }
-        catch (JsonException exception)
+        catch (SupprocomSecretsException)
+        {
+            throw;
+        }
+        catch (JsonException)
         {
             throw new SupprocomSecretsException(
                 "InvalidProviderManifest",
-                $"Provider manifest '{path}' is not valid JSON.",
-                exception);
+                $"Provider manifest '{path}' is not valid JSON.");
+        }
+        catch (Exception exception) when (
+            exception is InvalidOperationException or FormatException or OverflowException or ArgumentException)
+        {
+            throw new SupprocomSecretsException(
+                "InvalidProviderManifest",
+                $"Provider manifest '{path}' has an invalid JSON shape or version.");
         }
     }
 
-    private static class AssemblyLoader
-    {
-        public static System.Reflection.Assembly? Load(System.Reflection.AssemblyName name) =>
-            System.Reflection.Assembly.Load(name);
-    }
 }

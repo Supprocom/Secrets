@@ -17,14 +17,14 @@ internal static class SecretDocumentSerializer
         return Serialize(
             document.Values,
             document.SourceDirective,
-            document.HasLocalOptions ? document.LocalOptionsElement : null,
+            document.HasLocalOptions ? document.LocalOptionsNode : null,
             document.LocalOptions);
     }
 
     public static string Serialize(
         IReadOnlyDictionary<string, string> values,
         string? sourceDirective = null,
-        JsonElement? localOptions = null,
+        JsonNode? localOptions = null,
         IReadOnlyDictionary<string, string>? localOptionValues = null)
     {
         var builder = new StringBuilder();
@@ -50,14 +50,7 @@ internal static class SecretDocumentSerializer
         if (localOptions is not null || localOptionValues is { Count: > 0 })
         {
             JsonNode local = localOptions is not null
-                ? JsonNode.Parse(
-                      localOptions.Value.GetRawText(),
-                      documentOptions: new JsonDocumentOptions
-                      {
-                          AllowTrailingCommas = true,
-                          CommentHandling = JsonCommentHandling.Skip
-                      })
-                    ?? new JsonObject()
+                ? localOptions.DeepClone()
                 : BuildLocalObject(localOptionValues!);
 
             builder.Append("SUPPROCOM_LOCAL_OPTIONS=");

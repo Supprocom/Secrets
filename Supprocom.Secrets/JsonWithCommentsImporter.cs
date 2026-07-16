@@ -52,6 +52,10 @@ internal static class JsonWithCommentsImporter
                 }
 
                 result.LocalOptionsElement = property.Value.Clone();
+                result.LocalOptionsNode = SecretDocumentParser.ParseJsonObjectNode(
+                    property.Value.GetRawText(),
+                    path,
+                    "SUPPROCOM_LOCAL_OPTIONS");
                 foreach (KeyValuePair<string, string> item in SecretDocumentParser.FlattenJsonElement(
                              property.Value,
                              path,

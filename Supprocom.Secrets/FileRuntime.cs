@@ -1,6 +1,8 @@
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json.Nodes;
 
 namespace Supprocom.Secrets;
 
@@ -83,6 +85,9 @@ public sealed class SupprocomSecretFileStore : ISecretStore, ISecretDocumentStor
 
 internal sealed class SecretFileRuntime
 {
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> MutationLocks =
+        new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+
     private readonly SupprocomSecretsOptions _options;
     private readonly SupprocomSecretFileOptions _fileOptions;
     private string? _cachedKeyPath;
@@ -198,7 +203,7 @@ internal sealed class SecretFileRuntime
         Directory.CreateDirectory(DirectoryPath);
         string activePath = Path.Combine(DirectoryPath, _fileOptions.ActiveName);
         ParsedSecretDocument parsed = SecretDocumentParser.Parse(document, activePath);
-        ValidateSingleDocument(parsed);
+        ValidateDocumentSemantics(parsed);
         await WriteAtomicAsync(activePath, document, null, cancellationToken).ConfigureAwait(false);
     }
 
@@ -212,47 +217,67 @@ internal sealed class SecretFileRuntime
         ValidateFileNames();
         string normalizedKey = NormalizeMutationKey(key);
         Directory.CreateDirectory(DirectoryPath);
-        PhysicalFile physical = await LoadPhysicalAsync(
-                _fileOptions.ActiveName,
-                _fileOptions.TemplateName,
-                cancellationToken)
-            .ConfigureAwait(false);
-        ParsedSecretDocument document = physical.Document;
-
-        if (document.SourceDirective is not null)
+        string activePath = Path.Combine(DirectoryPath, _fileOptions.ActiveName);
+        SemaphoreSlim mutationLock = MutationLocks.GetOrAdd(Path.GetFullPath(activePath), _ => new SemaphoreSlim(1, 1));
+        await mutationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            throw new SupprocomSecretsException(
-                "ExternalProviderPointer",
-                "The pointer file cannot be mutated through the built-in local store.");
-        }
+            PhysicalFile physical = await LoadPhysicalAsync(
+                    _fileOptions.ActiveName,
+                    _fileOptions.TemplateName,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            ParsedSecretDocument document = physical.Document;
 
-        bool isLocal = document.LocalOptions.ContainsKey(normalizedKey);
-        if (isLocal)
-        {
-            if (delete)
-                document.LocalOptions.Remove(normalizedKey);
+            if (document.SourceDirective is not null)
+            {
+                throw new SupprocomSecretsException(
+                    "ExternalProviderPointer",
+                    "The pointer file cannot be mutated through the built-in local store.");
+            }
+
+            bool isLocal = document.LocalOptions.ContainsKey(normalizedKey);
+            if (isLocal)
+            {
+                JsonNode local = document.LocalOptionsNode
+                    ?? throw new SupprocomSecretsException(
+                        "InvalidLocalOptions",
+                        "The local-options document structure is unavailable for mutation.");
+                if (!MutateLocalNode(local, normalizedKey, value, delete))
+                {
+                    throw new SupprocomSecretsException(
+                        "InvalidLocalOptions",
+                        "The local-options document structure does not match its flattened configuration paths.");
+                }
+
+                document.LocalOptions.Clear();
+                foreach (KeyValuePair<string, string> item in SecretDocumentParser.FlattenJsonNode(
+                             local,
+                             activePath,
+                             "SUPPROCOM_LOCAL_OPTIONS"))
+                {
+                    document.LocalOptions[item.Key] = item.Value;
+                }
+
+                document.HasLocalOptions = document.LocalOptions.Count != 0;
+            }
             else
-                document.LocalOptions[normalizedKey] = value!;
+            {
+                if (delete)
+                    document.Values.Remove(normalizedKey);
+                else
+                    document.Values[normalizedKey] = value!;
+            }
 
-            document.LocalOptionsElement = null;
-            document.HasLocalOptions = document.LocalOptions.Count != 0;
+            string serialized = SecretDocumentSerializer.Serialize(document);
+            ParsedSecretDocument validated = SecretDocumentParser.Parse(serialized, activePath);
+            ValidateDocumentSemantics(validated);
+            await WriteAtomicAsync(activePath, serialized, null, cancellationToken).ConfigureAwait(false);
         }
-        else
+        finally
         {
-            if (delete)
-                document.Values.Remove(normalizedKey);
-            else
-                document.Values[normalizedKey] = value!;
+            mutationLock.Release();
         }
-
-        string serialized = SecretDocumentSerializer.Serialize(document);
-        _ = SecretDocumentParser.Parse(serialized, Path.Combine(DirectoryPath, _fileOptions.ActiveName));
-        await WriteAtomicAsync(
-                Path.Combine(DirectoryPath, _fileOptions.ActiveName),
-                serialized,
-                null,
-                cancellationToken)
-            .ConfigureAwait(false);
     }
 
     private async Task<PhysicalFile> LoadPhysicalAsync(
@@ -292,6 +317,7 @@ internal sealed class SecretFileRuntime
         try
         {
             ParsedSecretDocument parsed = SecretDocumentParser.Parse(plaintext, activePath);
+            ValidateDocumentSemantics(parsed);
             await EnsureProtectedAsync(activePath, originalBytes, plaintext, cancellationToken).ConfigureAwait(false);
             return new PhysicalFile(parsed, activePath);
         }
@@ -309,9 +335,10 @@ internal sealed class SecretFileRuntime
             if (SecretDocumentParser.TryParseJsonObject(plaintext, activePath, out _, out _))
             {
                 ParsedSecretDocument imported = JsonWithCommentsImporter.Import(plaintext, activePath);
-                ValidateSingleDocument(imported);
+                ValidateDocumentSemantics(imported);
                 string canonical = SecretDocumentSerializer.Serialize(imported);
                 ParsedSecretDocument reparsed = SecretDocumentParser.Parse(canonical, activePath);
+                ValidateDocumentSemantics(reparsed);
                 await PreserveOriginalAsync(activePath, originalBytes, cancellationToken).ConfigureAwait(false);
                 await WriteAtomicAsync(activePath, canonical, null, cancellationToken).ConfigureAwait(false);
                 return new PhysicalFile(reparsed, activePath);
@@ -355,23 +382,69 @@ internal sealed class SecretFileRuntime
 
         byte[] templateBytes = await File.ReadAllBytesAsync(templatePath, cancellationToken).ConfigureAwait(false);
         ParsedSecretDocument template = ValidateTemplate(templateBytes, templatePath);
+        FilePermissionSnapshot? permissions = FilePermissionSnapshot.Capture(activePath);
+        string? temporary = await PrepareAtomicFileAsync(
+                activePath,
+                template.RawText,
+                templateBytes,
+                cancellationToken,
+                permissions)
+            .ConfigureAwait(false);
+
         string quarantinePath = CreateUniqueSibling(activePath, ".unreadable-");
+        bool quarantined = false;
         try
         {
             File.Move(activePath, quarantinePath);
+            quarantined = true;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
+            DeleteTemporaryFile(temporary);
             throw new SupprocomSecretsException(
                 "RecoveryQuarantineFailed",
                 $"Unable to quarantine unreadable active file '{activePath}'.",
                 exception);
         }
 
-        await WriteAtomicAsync(activePath, template.RawText, templateBytes, cancellationToken).ConfigureAwait(false);
-        ParsedSecretDocument restored = SecretDocumentParser.Parse(template.RawText, activePath);
-        _ = originalBytes;
-        return new PhysicalFile(restored, activePath);
+        try
+        {
+            File.Move(temporary!, activePath);
+            temporary = null;
+            ParsedSecretDocument restored = SecretDocumentParser.Parse(template.RawText, activePath);
+            _ = originalBytes;
+            return new PhysicalFile(restored, activePath);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            if (quarantined && !File.Exists(activePath) && File.Exists(quarantinePath))
+            {
+                try
+                {
+                    File.Move(quarantinePath, activePath);
+                }
+                catch (Exception rollbackException) when (
+                    rollbackException is IOException or UnauthorizedAccessException or ArgumentException or
+                    NotSupportedException)
+                {
+                    throw new SupprocomSecretsException(
+                        "RecoveryRollbackFailed",
+                        $"Unable to restore unreadable active file '{activePath}' after recovery failed.",
+                        rollbackException);
+                }
+            }
+
+            throw new SupprocomSecretsException(
+                "RecoveryReplacementFailed",
+                $"Unable to install the validated recovery file '{activePath}'.",
+                exception);
+        }
+        finally
+        {
+            DeleteTemporaryFile(temporary);
+        }
     }
 
     private async Task<string> ReadPlaintextAsync(
@@ -434,6 +507,32 @@ internal sealed class SecretFileRuntime
         byte[]? originalPlaintextBytes,
         CancellationToken cancellationToken)
     {
+        FilePermissionSnapshot? permissions = FilePermissionSnapshot.Capture(path);
+        string temporary = await PrepareAtomicFileAsync(
+                path,
+                plaintext,
+                originalPlaintextBytes,
+                cancellationToken,
+                permissions)
+            .ConfigureAwait(false);
+        try
+        {
+            File.Move(temporary, path, overwrite: true);
+            temporary = string.Empty;
+        }
+        finally
+        {
+            DeleteTemporaryFile(temporary);
+        }
+    }
+
+    private async Task<string> PrepareAtomicFileAsync(
+        string path,
+        string plaintext,
+        byte[]? originalPlaintextBytes,
+        CancellationToken cancellationToken,
+        FilePermissionSnapshot? permissions)
+    {
         byte[] payload;
         if (_fileOptions.Protection == SecretFileProtection.InstallationBoundAesGcm)
         {
@@ -449,15 +548,25 @@ internal sealed class SecretFileRuntime
         }
         else
         {
-            payload = originalPlaintextBytes ?? Encoding.UTF8.GetBytes(plaintext);
+            payload = originalPlaintextBytes?.ToArray() ?? Encoding.UTF8.GetBytes(plaintext);
         }
 
-        await WriteAtomicBytesAsync(path, payload, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await PreparePayloadFileAsync(path, payload, permissions, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            if (_fileOptions.Protection == SecretFileProtection.InstallationBoundAesGcm)
+                CryptographicOperations.ZeroMemory(payload);
+        }
     }
 
-    private static async Task WriteAtomicBytesAsync(
+    private static async Task<string> PreparePayloadFileAsync(
         string path,
         byte[] payload,
+        FilePermissionSnapshot? permissions,
         CancellationToken cancellationToken)
     {
         string directory = Path.GetDirectoryName(path) ?? throw new InvalidOperationException("Missing file directory.");
@@ -473,16 +582,34 @@ internal sealed class SecretFileRuntime
                              bufferSize: 81920,
                              options: FileOptions.Asynchronous | FileOptions.WriteThrough))
             {
+                permissions?.Apply(temporary);
                 await stream.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
-
-            File.Move(temporary, path, overwrite: true);
+            return temporary;
         }
-        finally
+        catch
         {
-            if (File.Exists(temporary))
-                File.Delete(temporary);
+            DeleteTemporaryFile(temporary);
+            throw;
+        }
+    }
+
+    private static void DeleteTemporaryFile(string? path)
+    {
+        if (string.IsNullOrEmpty(path))
+            return;
+
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
         }
     }
 
@@ -530,6 +657,7 @@ internal sealed class SecretFileRuntime
         ParsedSecretDocument document = SecretDocumentParser.Parse(text, templatePath);
         if (document.RawText.Length == 0)
             throw new SupprocomSecretsException("InvalidTemplate", $"Template '{templatePath}' is empty.");
+        ValidateDocumentSemantics(document);
         return document;
     }
 
@@ -606,7 +734,7 @@ internal sealed class SecretFileRuntime
         }
     }
 
-    private static void ValidateSingleDocument(ParsedSecretDocument document)
+    private static void ValidateDocumentSemantics(ParsedSecretDocument document)
     {
         if (document.SourceDirective is not null && document.Values.Count != 0)
         {
@@ -614,6 +742,9 @@ internal sealed class SecretFileRuntime
                 "PointerFileContainsConfiguration",
                 "When SUPPROCOM_SECRET_SOURCE is selected, the dotenv document may contain only that directive, SUPPROCOM_LOCAL_OPTIONS, comments, and blank lines.");
         }
+
+        if (document.SourceDirective is not null)
+            ValidateSourceDirective(document.SourceDirective);
     }
 
     internal static void ValidateSourceDirective(string source)
@@ -635,6 +766,49 @@ internal sealed class SecretFileRuntime
             throw new SupprocomSecretsException(
                 "UnnecessaryEnvSource",
                 "The built-in dotenv store is selected by omitting SUPPROCOM_SECRET_SOURCE; env:// is not a provider pointer.");
+        }
+    }
+
+    private static bool MutateLocalNode(
+        JsonNode root,
+        string normalizedKey,
+        string? value,
+        bool delete)
+    {
+        string[] segments = normalizedKey.Split(':', StringSplitOptions.None);
+        JsonNode? current = root;
+        for (int index = 0; index < segments.Length - 1; index++)
+        {
+            current = current switch
+            {
+                JsonObject objectNode => objectNode[segments[index]],
+                JsonArray arrayNode when int.TryParse(segments[index], out int arrayIndex) &&
+                    arrayIndex >= 0 && arrayIndex < arrayNode.Count => arrayNode[arrayIndex],
+                _ => null
+            };
+
+            if (current is null)
+                return false;
+        }
+
+        string leaf = segments[^1];
+        switch (current)
+        {
+            case JsonObject objectNode when objectNode.ContainsKey(leaf):
+                if (delete)
+                    objectNode.Remove(leaf);
+                else
+                    objectNode[leaf] = JsonValue.Create(value);
+                return true;
+            case JsonArray arrayNode when int.TryParse(leaf, out int arrayIndex) &&
+                arrayIndex >= 0 && arrayIndex < arrayNode.Count:
+                if (delete)
+                    arrayNode.RemoveAt(arrayIndex);
+                else
+                    arrayNode[arrayIndex] = JsonValue.Create(value);
+                return true;
+            default:
+                return false;
         }
     }
 

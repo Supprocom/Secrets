@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -319,6 +320,91 @@ public sealed class SupprocomSecretsTests
     }
 
     [Test]
+    public async Task LocalOptionMutationPreservesUntouchedJsonTypesAndShape()
+    {
+        using var directory = new TemporaryDirectory();
+        Write(directory.Path, ".env", """
+            Ordinary=value
+            SUPPROCOM_LOCAL_OPTIONS={
+              "Enabled": true,
+              "Retries": 3,
+              "Missing": null,
+              "Nested": {
+                "Value": "before",
+                "Other": false,
+              },
+              "Hosts": ["a", "b"],
+            }
+            """);
+
+        var store = new SupprocomSecretFileStore(new SupprocomSecretFileOptions { Directory = directory.Path });
+        await store.SetAsync("Nested:Value", "after");
+        AssertLocalJsonTypes(directory.Path, expectedNestedValue: "after");
+
+        await store.DeleteAsync("Nested:Value");
+        AssertLocalJsonTypes(directory.Path, expectedNestedValue: null);
+    }
+
+    [Test]
+    public async Task ConcurrentMutationsDoNotLoseACommit()
+    {
+        using var directory = new TemporaryDirectory();
+        Write(directory.Path, ".env", "A=zero\n");
+        var first = new SupprocomSecretFileStore(new SupprocomSecretFileOptions { Directory = directory.Path });
+        var second = new SupprocomSecretFileStore(new SupprocomSecretFileOptions { Directory = directory.Path });
+
+        await Task.WhenAll(first.SetAsync("A", "one"), second.SetAsync("B", "two"));
+
+        IReadOnlyDictionary<string, string> values = await first.LoadAsync();
+        Assert.That(values["A"], Is.EqualTo("one"));
+        Assert.That(values["B"], Is.EqualTo("two"));
+    }
+
+    [Test]
+    public async Task InvalidSourceReplacementLeavesActiveBytesUntouched()
+    {
+        using var directory = new TemporaryDirectory();
+        byte[] original = Encoding.UTF8.GetBytes("Existing=unchanged\n");
+        File.WriteAllBytes(Path.Combine(directory.Path, ".env"), original);
+        var store = new SupprocomSecretFileStore(new SupprocomSecretFileOptions { Directory = directory.Path });
+
+        SupprocomSecretsException exception = Assert.ThrowsAsync<SupprocomSecretsException>(
+            async () => await store.ReplaceDocumentAsync("SUPPROCOM_SECRET_SOURCE=env://\n"))!;
+
+        Assert.That(exception.Code, Is.EqualTo("UnnecessaryEnvSource"));
+        Assert.That(File.ReadAllBytes(Path.Combine(directory.Path, ".env")), Is.EqualTo(original));
+    }
+
+    [Test]
+    public async Task InvalidTemplateAndImportLeaveActiveStateUntouched()
+    {
+        using var templateDirectory = new TemporaryDirectory();
+        Write(templateDirectory.Path, ".env.template", "SUPPROCOM_SECRET_SOURCE=env://\n");
+        var templateStore = new SupprocomSecretFileStore(
+            new SupprocomSecretFileOptions { Directory = templateDirectory.Path });
+
+        SupprocomSecretsException templateException = Assert.ThrowsAsync<SupprocomSecretsException>(
+            async () => await templateStore.LoadAsync())!;
+        Assert.That(templateException.Code, Is.EqualTo("UnnecessaryEnvSource"));
+        Assert.That(File.Exists(Path.Combine(templateDirectory.Path, ".env")), Is.False);
+
+        using var importDirectory = new TemporaryDirectory();
+        byte[] original = Encoding.UTF8.GetBytes("{\"SUPPROCOM_SECRET_SOURCE\":\"env://\"}");
+        File.WriteAllBytes(Path.Combine(importDirectory.Path, ".env"), original);
+        var importStore = new SupprocomSecretFileStore(new SupprocomSecretFileOptions
+        {
+            Directory = importDirectory.Path,
+            Import = SecretFileImport.JsonWithCommentsOnce
+        });
+
+        SupprocomSecretsException importException = Assert.ThrowsAsync<SupprocomSecretsException>(
+            async () => await importStore.LoadAsync())!;
+        Assert.That(importException.Code, Is.EqualTo("UnnecessaryEnvSource"));
+        Assert.That(File.ReadAllBytes(Path.Combine(importDirectory.Path, ".env")), Is.EqualTo(original));
+        Assert.That(Directory.GetFiles(importDirectory.Path, ".pre-supprocom-import-*"), Has.Length.EqualTo(0));
+    }
+
+    [Test]
     public async Task ProtectedReadsAndMutationsUseCiphertextAndAtomicReplacement()
     {
         using var directory = new TemporaryDirectory();
@@ -368,6 +454,106 @@ public sealed class SupprocomSecretsTests
     }
 
     [Test]
+    public void RecoveryPreparesBeforeQuarantineWhenReplacementCannotBeProtected()
+    {
+        using var directory = new TemporaryDirectory();
+        byte[] original = Encoding.UTF8.GetBytes("not-an-assignment\n");
+        File.WriteAllBytes(Path.Combine(directory.Path, ".env"), original);
+        Write(directory.Path, ".env.template", "Recovered=yes\n");
+        var options = new SupprocomSecretFileOptions
+        {
+            Directory = directory.Path,
+            Recovery = SecretFileRecovery.QuarantineAndRestoreTemplate,
+            Protection = SecretFileProtection.InstallationBoundAesGcm,
+            InstallationKeyStore = new FailingKeyStore()
+        };
+
+        SupprocomSecretsException exception = Assert.ThrowsAsync<SupprocomSecretsException>(
+            async () => await new SupprocomSecretFileStore(options).LoadAsync())!;
+
+        Assert.That(exception.Code, Is.EqualTo("InstallationKeyUnavailable"));
+        Assert.That(File.ReadAllBytes(Path.Combine(directory.Path, ".env")), Is.EqualTo(original));
+        Assert.That(Directory.GetFiles(directory.Path, ".unreadable-*"), Has.Length.EqualTo(0));
+    }
+
+    [Test]
+    public void ConfigurationHonorsExplicitStartupCancellation()
+    {
+        using var directory = new TemporaryDirectory();
+        Write(directory.Path, ".env", "SUPPROCOM_SECRET_SOURCE=slow://vault/application\n");
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        SupprocomSecretsException exception = Assert.Throws<SupprocomSecretsException>(() => new ConfigurationBuilder()
+            .AddSupprocomSecretsProvider(new SlowProvider())
+            .AddSupprocomSecrets(options =>
+            {
+                options.File.Directory = directory.Path;
+                options.StartupCancellationToken = cancellation.Token;
+            })
+            .Build())!;
+
+        Assert.That(exception.Code, Is.EqualTo("ConfigurationLoadCancelled"));
+    }
+
+    [Test]
+    public void InstallationKeyCreationCancellationLeavesNoFinalOrTemporaryKey()
+    {
+        using var directory = new TemporaryDirectory();
+        string path = Path.Combine(directory.Path, "installation.key");
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        Assert.ThrowsAsync<OperationCanceledException>(
+            async () => await new FileInstallationKeyStore(path).GetOrCreateKeyAsync(cancellation.Token));
+
+        Assert.That(File.Exists(path), Is.False);
+        Assert.That(Directory.GetFiles(directory.Path, ".supprocom-key-*.tmp"), Has.Length.EqualTo(0));
+    }
+
+    [Test]
+    public void InstallationKeyDirectoryFailureDoesNotCreateAStrandedKey()
+    {
+        using var directory = new TemporaryDirectory();
+        string parent = Path.Combine(directory.Path, "not-a-directory");
+        File.WriteAllText(parent, "occupied", new UTF8Encoding(false));
+        string path = Path.Combine(parent, "installation.key");
+
+        SupprocomSecretsException exception = Assert.ThrowsAsync<SupprocomSecretsException>(
+            async () => await new FileInstallationKeyStore(path).GetOrCreateKeyAsync())!;
+
+        Assert.That(exception.Code, Is.EqualTo("InstallationKeyCreationFailed"));
+        Assert.That(Directory.GetFiles(directory.Path, ".supprocom-key-*.tmp"), Has.Length.EqualTo(0));
+    }
+
+    [Test]
+    public void TruncatedInstallationKeyIsRejected()
+    {
+        using var directory = new TemporaryDirectory();
+        string path = Path.Combine(directory.Path, "installation.key");
+        File.WriteAllBytes(path, new byte[5]);
+
+        SupprocomSecretsException exception = Assert.ThrowsAsync<SupprocomSecretsException>(
+            async () => await new FileInstallationKeyStore(path).GetOrCreateKeyAsync())!;
+
+        Assert.That(exception.Code, Is.EqualTo("InvalidInstallationKey"));
+    }
+
+    [Test]
+    public async Task ConcurrentInstallationKeyCreatorsConvergeOnOneCompleteKey()
+    {
+        using var directory = new TemporaryDirectory();
+        string path = Path.Combine(directory.Path, "installation.key");
+        Task<byte[]> first = new FileInstallationKeyStore(path).GetOrCreateKeyAsync();
+        Task<byte[]> second = new FileInstallationKeyStore(path).GetOrCreateKeyAsync();
+        byte[][] keys = await Task.WhenAll(first, second);
+
+        Assert.That(keys[0], Is.EqualTo(keys[1]));
+        Assert.That(File.ReadAllBytes(path), Has.Length.EqualTo(32));
+        Assert.That(Directory.GetFiles(directory.Path, ".supprocom-key-*.tmp"), Has.Length.EqualTo(0));
+    }
+
+    [Test]
     public async Task ManifestDiscoveryUsesOnlyTheDeclaredProviderType()
     {
         using var directory = new TemporaryDirectory();
@@ -399,6 +585,73 @@ public sealed class SupprocomSecretsTests
             .Build();
 
         Assert.That(configuration["Manifest:Value"], Is.EqualTo("from-manifest"));
+    }
+
+    [TestCase("[]", "InvalidProviderManifest")]
+    [TestCase("{\"version\":999999999999,\"providers\":[]}", "InvalidProviderManifest")]
+    public void MalformedProviderManifestHasPreciseValueFreeDiagnostics(string manifestText, string code)
+    {
+        using var directory = new TemporaryDirectory();
+        Write(directory.Path, ".env", "SUPPROCOM_SECRET_SOURCE=manifest://vault/application\n");
+        string manifest = Path.Combine(directory.Path, "supprocom-secrets.providers.json");
+        File.WriteAllText(manifest, manifestText, new UTF8Encoding(false));
+
+        SupprocomSecretsException exception = Assert.Throws<SupprocomSecretsException>(() => new ConfigurationBuilder()
+            .AddSupprocomSecrets(options =>
+            {
+                options.File.Directory = directory.Path;
+                options.ProviderManifestPath = manifest;
+            })
+            .Build())!;
+
+        Assert.That(exception.Code, Is.EqualTo(code));
+        Assert.That(exception.ToString(), Does.Not.Contain("secret-value"));
+    }
+
+    [Test]
+    public void ProviderWithoutParameterlessConstructorHasPreciseDiagnostic()
+    {
+        using var directory = new TemporaryDirectory();
+        Write(directory.Path, ".env", "SUPPROCOM_SECRET_SOURCE=ctor://vault/application\n");
+        string manifest = Path.Combine(directory.Path, "supprocom-secrets.providers.json");
+        string assembly = typeof(NoDefaultConstructorProvider).Assembly.GetName().Name!;
+        File.WriteAllText(
+            manifest,
+            $$"""
+            {
+              "version": 1,
+              "providers": [
+                {
+                  "scheme": "ctor",
+                  "assembly": "{{assembly}}",
+                  "providerType": "{{typeof(NoDefaultConstructorProvider).FullName}}"
+                }
+              ]
+            }
+            """,
+            new UTF8Encoding(false));
+
+        SupprocomSecretsException exception = Assert.Throws<SupprocomSecretsException>(() => new ConfigurationBuilder()
+            .AddSupprocomSecrets(options =>
+            {
+                options.File.Directory = directory.Path;
+                options.ProviderManifestPath = manifest;
+            })
+            .Build())!;
+
+        Assert.That(exception.Code, Is.EqualTo("ProviderInstantiationFailed"));
+        Assert.That(exception.ToString(), Does.Not.Contain("secret-value"));
+    }
+
+    [Test]
+    public async Task FailedProtectedMutationsLeaveTheActiveDocumentUnchanged()
+    {
+        await AssertProtectedWriteFailure(
+            async store => await store.SetAsync("A", "new"));
+        await AssertProtectedWriteFailure(
+            async store => await store.DeleteAsync("A"));
+        await AssertProtectedWriteFailure(
+            async store => await store.ReplaceDocumentAsync("A=replaced\n"));
     }
 
     [Test]
@@ -491,6 +744,47 @@ public sealed class SupprocomSecretsTests
         Assert.That(provider.Opened, Is.True);
     }
 
+    private static void AssertLocalJsonTypes(string directory, string? expectedNestedValue)
+    {
+        string document = File.ReadAllText(Path.Combine(directory, ".env"));
+        const string marker = "SUPPROCOM_LOCAL_OPTIONS=";
+        int start = document.IndexOf(marker, StringComparison.Ordinal);
+        Assert.That(start, Is.GreaterThanOrEqualTo(0));
+        using JsonDocument json = JsonDocument.Parse(document[(start + marker.Length)..]);
+        JsonElement root = json.RootElement;
+
+        Assert.That(root.GetProperty("Enabled").ValueKind, Is.EqualTo(JsonValueKind.True));
+        Assert.That(root.GetProperty("Retries").GetInt32(), Is.EqualTo(3));
+        Assert.That(root.GetProperty("Missing").ValueKind, Is.EqualTo(JsonValueKind.Null));
+        Assert.That(root.GetProperty("Nested").GetProperty("Other").GetBoolean(), Is.False);
+        Assert.That(root.GetProperty("Hosts").EnumerateArray().Select(item => item.GetString()), Is.EqualTo(new[] { "a", "b" }));
+
+        bool hasValue = root.GetProperty("Nested").TryGetProperty("Value", out JsonElement value);
+        Assert.That(hasValue, Is.EqualTo(expectedNestedValue is not null));
+        if (expectedNestedValue is not null)
+            Assert.That(value.GetString(), Is.EqualTo(expectedNestedValue));
+    }
+
+    private static async Task AssertProtectedWriteFailure(
+        Func<SupprocomSecretFileStore, Task> mutation)
+    {
+        using var directory = new TemporaryDirectory();
+        byte[] original = Encoding.UTF8.GetBytes("A=old\n");
+        File.WriteAllBytes(Path.Combine(directory.Path, ".env"), original);
+        var options = new SupprocomSecretFileOptions
+        {
+            Directory = directory.Path,
+            Protection = SecretFileProtection.InstallationBoundAesGcm,
+            InstallationKeyStore = new FailingKeyStore()
+        };
+
+        SupprocomSecretsException exception = Assert.ThrowsAsync<SupprocomSecretsException>(
+            async () => await mutation(new SupprocomSecretFileStore(options)))!;
+
+        Assert.That(exception.Code, Is.EqualTo("InstallationKeyUnavailable"));
+        Assert.That(File.ReadAllBytes(Path.Combine(directory.Path, ".env")), Is.EqualTo(original));
+    }
+
     private static void Write(string directory, string name, string contents) =>
         File.WriteAllText(Path.Combine(directory, name), contents, new UTF8Encoding(false));
 
@@ -529,6 +823,14 @@ public sealed class SupprocomSecretsTests
 
         public Task<ISecretStore> OpenAsync(Uri source, CancellationToken cancellationToken = default) =>
             Task.FromResult<ISecretStore>(new SlowStore());
+    }
+
+    private sealed class FailingKeyStore : IInstallationKeyStore
+    {
+        public Task<byte[]> GetOrCreateKeyAsync(CancellationToken cancellationToken = default) =>
+            throw new SupprocomSecretsException(
+                "InstallationKeyUnavailable",
+                "The test installation key is unavailable.");
     }
 
     private sealed class FixtureStore : ISecretStore
@@ -613,4 +915,14 @@ public sealed class SupprocomSecretsTests
                 Directory.Delete(Path, recursive: true);
         }
     }
+}
+
+public sealed class NoDefaultConstructorProvider : ISecretStoreProvider
+{
+    public NoDefaultConstructorProvider(string required) => _ = required;
+
+    public string Scheme => "ctor";
+
+    public Task<ISecretStore> OpenAsync(Uri source, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
 }

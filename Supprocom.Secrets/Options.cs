@@ -36,6 +36,8 @@ public sealed class SupprocomSecretsOptions
 
     public TimeSpan ProviderLoadTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
+    public CancellationToken StartupCancellationToken { get; set; }
+
     public IList<ISecretStoreProvider> ProviderAdapters { get; } = new List<ISecretStoreProvider>();
 }
 

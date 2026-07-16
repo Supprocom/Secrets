@@ -7,6 +7,8 @@ namespace Supprocom.Secrets;
 
 public sealed class FileInstallationKeyStore : IInstallationKeyStore
 {
+    private const int KeySize = 32;
+    private const int MaxConcurrentAttempts = 6;
     private readonly string _path;
 
     public FileInstallationKeyStore(string path)
@@ -21,37 +23,137 @@ public sealed class FileInstallationKeyStore : IInstallationKeyStore
     {
         cancellationToken.ThrowIfCancellationRequested();
         string? directory = Path.GetDirectoryName(_path);
-        if (!string.IsNullOrEmpty(directory))
-            Directory.CreateDirectory(directory);
-
-        if (File.Exists(_path))
-            return await ReadKeyAsync(cancellationToken).ConfigureAwait(false);
-
-        byte[] key = RandomNumberGenerator.GetBytes(32);
         try
         {
-            await using FileStream stream = new(
-                _path,
-                FileMode.CreateNew,
-                FileAccess.Write,
-                FileShare.None,
-                bufferSize: 4096,
-                options: FileOptions.Asynchronous | FileOptions.WriteThrough);
-            await stream.WriteAsync(key, cancellationToken).ConfigureAwait(false);
-            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-            RestrictKeyPermissions(_path);
-            return key;
+            if (!string.IsNullOrEmpty(directory))
+                Directory.CreateDirectory(directory);
         }
-        catch (IOException) when (File.Exists(_path))
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            CryptographicOperations.ZeroMemory(key);
-            return await ReadKeyAsync(cancellationToken).ConfigureAwait(false);
+            throw new SupprocomSecretsException(
+                "InstallationKeyCreationFailed",
+                $"Unable to create the installation key directory for '{_path}'.",
+                exception);
         }
+
+        for (int attempt = 0; attempt < MaxConcurrentAttempts; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (File.Exists(_path))
+            {
+                try
+                {
+                    return await ReadKeyAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (SupprocomSecretsException exception) when (
+                    exception.Code == "InvalidInstallationKey" && attempt + 1 < MaxConcurrentAttempts)
+                {
+                    await RetryConcurrentReadAsync(attempt, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            byte[] key = RandomNumberGenerator.GetBytes(KeySize);
+            string temporary = Path.Combine(
+                directory ?? Path.GetTempPath(),
+                $".supprocom-key-{Guid.NewGuid():N}.tmp");
+            bool installed = false;
+            try
+            {
+                await using (FileStream stream = new(
+                                 temporary,
+                                 FileMode.CreateNew,
+                                 FileAccess.Write,
+                                 FileShare.None,
+                                 bufferSize: 4096,
+                                 options: FileOptions.Asynchronous | FileOptions.WriteThrough))
+                {
+                    RestrictKeyPermissions(temporary);
+                    await stream.WriteAsync(key, cancellationToken).ConfigureAwait(false);
+                    await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                }
+
+                if (new FileInfo(temporary).Length != KeySize)
+                {
+                    throw new SupprocomSecretsException(
+                        "InvalidInstallationKey",
+                        "The temporary installation key did not contain 32 bytes after flushing.");
+                }
+
+                try
+                {
+                    File.Move(temporary, _path);
+                    installed = true;
+                    return key;
+                }
+                catch (IOException) when (File.Exists(_path))
+                {
+                    if (attempt + 1 >= MaxConcurrentAttempts)
+                    {
+                        throw new SupprocomSecretsException(
+                            "InstallationKeyCreationFailed",
+                            $"Another process won installation key creation for '{_path}', but its key could not be read in time.");
+                    }
+                }
+            }
+            catch (SupprocomSecretsException)
+            {
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (IOException exception) when (!File.Exists(_path))
+            {
+                throw new SupprocomSecretsException(
+                    "InstallationKeyCreationFailed",
+                    $"Unable to create installation key '{_path}'.",
+                    exception);
+            }
+            catch (UnauthorizedAccessException exception) when (!File.Exists(_path))
+            {
+                throw new SupprocomSecretsException(
+                    "InstallationKeyCreationFailed",
+                    $"Unable to create installation key '{_path}'.",
+                    exception);
+            }
+            finally
+            {
+                if (!installed)
+                    CryptographicOperations.ZeroMemory(key);
+                DeleteTemporary(temporary);
+            }
+
+            if (attempt + 1 < MaxConcurrentAttempts)
+                await RetryConcurrentReadAsync(attempt, cancellationToken).ConfigureAwait(false);
+        }
+
+        throw new SupprocomSecretsException(
+            "InstallationKeyCreationFailed",
+            $"Unable to establish installation key '{_path}' after bounded concurrent-creation retries.");
     }
 
     private async Task<byte[]> ReadKeyAsync(CancellationToken cancellationToken)
     {
-        byte[] key = await File.ReadAllBytesAsync(_path, cancellationToken).ConfigureAwait(false);
+        byte[] key;
+        try
+        {
+            key = await File.ReadAllBytesAsync(_path, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException or InvalidOperationException or
+                PlatformNotSupportedException)
+        {
+            throw new SupprocomSecretsException(
+                "InstallationKeyReadFailed",
+                $"Unable to read installation key '{_path}'.",
+                exception);
+        }
+
         if (key.Length != 32)
         {
             CryptographicOperations.ZeroMemory(key);
@@ -60,9 +162,37 @@ public sealed class FileInstallationKeyStore : IInstallationKeyStore
                 $"Installation key file '{_path}' must contain a 32-byte key.");
         }
 
-        RestrictKeyPermissions(_path);
+        try
+        {
+            RestrictKeyPermissions(_path);
+            return key;
+        }
+        catch
+        {
+            CryptographicOperations.ZeroMemory(key);
+            throw;
+        }
+    }
 
-        return key;
+    private static async Task RetryConcurrentReadAsync(
+        int attempt,
+        CancellationToken cancellationToken) =>
+        await Task.Delay(TimeSpan.FromMilliseconds(10 * (attempt + 1)), cancellationToken)
+            .ConfigureAwait(false);
+
+    private static void DeleteTemporary(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
     }
 
     private static void RestrictKeyPermissions(string path)
@@ -101,7 +231,9 @@ public sealed class FileInstallationKeyStore : IInstallationKeyStore
             {
                 File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
             }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException or InvalidOperationException or
+                PlatformNotSupportedException)
             {
                 throw new SupprocomSecretsException(
                     "InstallationKeyPermissions",

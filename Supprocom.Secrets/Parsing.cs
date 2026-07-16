@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace Supprocom.Secrets;
 
@@ -23,6 +24,8 @@ internal sealed class ParsedSecretDocument
     public bool HasLocalOptions { get; set; }
 
     public JsonElement? LocalOptionsElement { get; set; }
+
+    public JsonNode? LocalOptionsNode { get; set; }
 
     public string? SourceDirective { get; set; }
 }
@@ -88,6 +91,7 @@ internal static class SecretDocumentParser
                 }
 
                 result.LocalOptionsElement = local.Element;
+                result.LocalOptionsNode = local.Node;
                 result.HasLocalOptions = true;
                 index = local.FinalLine;
                 continue;
@@ -151,6 +155,15 @@ internal static class SecretDocumentParser
         return values;
     }
 
+    internal static Dictionary<string, string> FlattenJsonNode(
+        JsonNode node,
+        string path,
+        string context)
+    {
+        ArgumentNullException.ThrowIfNull(node);
+        return FlattenJsonObject(node.ToJsonString(), path, context);
+    }
+
     public static bool TryParseJsonObject(
         string text,
         string path,
@@ -186,6 +199,18 @@ internal static class SecretDocumentParser
             throw Error("InvalidJsonObject", $"{context} in '{path}' must be a JSON object.");
 
         return document.RootElement.Clone();
+    }
+
+    internal static JsonNode ParseJsonObjectNode(string json, string path, string context)
+    {
+        using JsonDocument document = ParseJsonDocument(json, path, context);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+            throw Error("InvalidJsonObject", $"{context} in '{path}' must be a JSON object.");
+
+        return JsonNode.Parse(
+                   document.RootElement.GetRawText(),
+                   documentOptions: JsonOptions)
+               ?? new JsonObject();
     }
 
     private static LocalOptionsRead ReadLocalOptions(
@@ -288,6 +313,7 @@ internal static class SecretDocumentParser
         return new LocalOptionsRead(
             json,
             element,
+            JsonNode.Parse(json, documentOptions: JsonOptions) ?? new JsonObject(),
             startLine + CountNewlines(json));
     }
 
@@ -493,5 +519,6 @@ internal static class SecretDocumentParser
     private readonly record struct LocalOptionsRead(
         string Json,
         JsonElement Element,
+        JsonNode Node,
         int FinalLine);
 }
