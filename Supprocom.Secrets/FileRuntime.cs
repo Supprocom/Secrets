@@ -619,6 +619,7 @@ internal sealed class SecretFileRuntime
             !Uri.TryCreate(source, UriKind.Absolute, out Uri? uri) ||
             string.IsNullOrWhiteSpace(uri.Scheme) ||
             uri.UserInfo.Length != 0 ||
+            uri.Query.Length != 0 ||
             uri.Fragment.Length != 0)
         {
             throw new SupprocomSecretsException(

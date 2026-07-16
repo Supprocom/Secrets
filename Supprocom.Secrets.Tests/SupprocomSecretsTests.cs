@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
 using System.Text;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using NUnit.Framework;
 using Supprocom.Secrets;
 
@@ -140,6 +142,50 @@ public sealed class SupprocomSecretsTests
     }
 
     [Test]
+    public async Task DevelopmentTemplateConventionsAreDiscoveredWithoutOptions()
+    {
+        using var directory = new TemporaryDirectory();
+        Write(directory.Path, ".env.template", "Base=base\n");
+        Write(directory.Path, ".dev.env.template", "Dev=overlay\n");
+
+        var fileOptions = new SupprocomSecretFileOptions { Directory = directory.Path };
+        IReadOnlyDictionary<string, string> values = await new SupprocomSecretFileStore(
+                fileOptions,
+                environmentName: "Development")
+            .LoadAsync();
+
+        Assert.That(values["Base"], Is.EqualTo("base"));
+        Assert.That(values["Dev"], Is.EqualTo("overlay"));
+        Assert.That(File.Exists(Path.Combine(directory.Path, ".dev.env")), Is.True);
+    }
+
+    [Test]
+    public void FileCanExplicitlyOverrideAnEarlierEnvironmentSource()
+    {
+        using var directory = new TemporaryDirectory();
+        const string key = "SUPPROCOM_TEST_FILE_WINS";
+        Write(directory.Path, ".env", $"{key}=file\n");
+        string? previous = Environment.GetEnvironmentVariable(key);
+        try
+        {
+            Environment.SetEnvironmentVariable(key, "process");
+            IConfiguration configuration = new ConfigurationBuilder()
+                .AddEnvironmentVariables()
+                .AddSupprocomSecrets(options =>
+                {
+                    options.File.Directory = directory.Path;
+                    options.FileOverridesProcessEnvironment = true;
+                })
+                .Build();
+            Assert.That(configuration[key], Is.EqualTo("file"));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(key, previous);
+        }
+    }
+
+    [Test]
     public async Task LocalOptionsOverlayAcrossDevelopmentFiles()
     {
         using var directory = new TemporaryDirectory();
@@ -245,6 +291,34 @@ public sealed class SupprocomSecretsTests
     }
 
     [Test]
+    public void LocalOptionsBindThroughOrdinaryOptionsWithoutPerKeyRegistration()
+    {
+        using var directory = new TemporaryDirectory();
+        Write(directory.Path, ".env", """
+            Auth__LocalApiKey=portable
+            SUPPROCOM_LOCAL_OPTIONS={
+              "Auth": {
+                "LocalApiKey": "installation-local",
+                "Tenant": "development"
+              }
+            }
+            """);
+
+        IConfiguration configuration = new ConfigurationBuilder()
+            .AddSupprocomSecrets(options => options.File.Directory = directory.Path)
+            .Build();
+        using ServiceProvider services = new ServiceCollection()
+            .AddOptions<AuthOptions>()
+            .Bind(configuration.GetSection("Auth"))
+            .Services
+            .BuildServiceProvider();
+
+        AuthOptions bound = services.GetRequiredService<IOptions<AuthOptions>>().Value;
+        Assert.That(bound.LocalApiKey, Is.EqualTo("installation-local"));
+        Assert.That(bound.Tenant, Is.EqualTo("development"));
+    }
+
+    [Test]
     public async Task ProtectedReadsAndMutationsUseCiphertextAndAtomicReplacement()
     {
         using var directory = new TemporaryDirectory();
@@ -328,6 +402,74 @@ public sealed class SupprocomSecretsTests
     }
 
     [Test]
+    public void ExternalProviderFailureDoesNotRecoverFromAFileTemplateOrLeakValues()
+    {
+        using var directory = new TemporaryDirectory();
+        Write(directory.Path, ".env", "SUPPROCOM_SECRET_SOURCE=failure://vault/application\n");
+        Write(directory.Path, ".env.template", "Fallback=must-not-load\n");
+
+        var exception = Assert.Throws<SupprocomSecretsException>(() => new ConfigurationBuilder()
+            .AddSupprocomSecretsProvider(new FailingProvider())
+            .AddSupprocomSecrets(options => options.File.Directory = directory.Path)
+            .Build());
+
+        Assert.That(exception!.Code, Is.EqualTo("ProviderLoadFailed"));
+        Assert.That(exception.ToString(), Does.Not.Contain("secret-from-provider"));
+        Assert.That(Directory.GetFiles(directory.Path, ".unreadable-*") , Has.Length.EqualTo(0));
+        Assert.That(File.ReadAllText(Path.Combine(directory.Path, ".env")), Does.Contain("SUPPROCOM_SECRET_SOURCE"));
+    }
+
+    [Test]
+    public void ProviderTimeoutIsBoundedAndValueFree()
+    {
+        using var directory = new TemporaryDirectory();
+        Write(directory.Path, ".env", "SUPPROCOM_SECRET_SOURCE=slow://vault/application\n");
+        var exception = Assert.Throws<SupprocomSecretsException>(() => new ConfigurationBuilder()
+            .AddSupprocomSecretsProvider(new SlowProvider())
+            .AddSupprocomSecrets(options =>
+            {
+                options.File.Directory = directory.Path;
+                options.ProviderLoadTimeout = TimeSpan.FromMilliseconds(20);
+            })
+            .Build());
+
+        Assert.That(exception!.Code, Is.EqualTo("ProviderTimeout"));
+        Assert.That(exception.ToString(), Does.Not.Contain("secret-from-provider"));
+    }
+
+    [Test]
+    public async Task CompatibleEncryptedJsonImportUsesTheConfiguredKey()
+    {
+        using var directory = new TemporaryDirectory();
+        string keyPath = Path.Combine(directory.Path, "sharpclaw.key");
+        byte[] key = Enumerable.Range(1, 32).Select(value => (byte)value).ToArray();
+        File.WriteAllBytes(keyPath, key);
+        string json = """
+            {
+              "Api": { "Endpoint": "https://example.test", },
+              "SUPPROCOM_LOCAL_OPTIONS": { "Local": "value", },
+            }
+            """;
+        byte[] original = SecretFileProtectionCodec.Encrypt(json, key);
+        File.WriteAllBytes(Path.Combine(directory.Path, ".env"), original);
+
+        var options = new SupprocomSecretFileOptions
+        {
+            Directory = directory.Path,
+            Import = SecretFileImport.JsonWithCommentsOnce,
+            Protection = SecretFileProtection.InstallationBoundAesGcm,
+            InstallationKeyPath = keyPath
+        };
+        IReadOnlyDictionary<string, string> values = await new SupprocomSecretFileStore(options).LoadAsync();
+
+        Assert.That(values["Api:Endpoint"], Is.EqualTo("https://example.test"));
+        Assert.That(values["Local"], Is.EqualTo("value"));
+        Assert.That(File.ReadAllBytes(Path.Combine(directory.Path, ".env"))[0], Is.EqualTo(1));
+        string preserved = Directory.GetFiles(directory.Path, ".pre-supprocom-import-*").Single();
+        Assert.That(File.ReadAllBytes(preserved), Is.EqualTo(original));
+    }
+
+    [Test]
     public async Task ManualProviderRegistrationKeepsConsumerCodeUnchanged()
     {
         using var directory = new TemporaryDirectory();
@@ -373,6 +515,22 @@ public sealed class SupprocomSecretsTests
             Task.FromResult<ISecretStore>(new ManifestStore());
     }
 
+    public sealed class FailingProvider : ISecretStoreProvider
+    {
+        public string Scheme => "failure";
+
+        public Task<ISecretStore> OpenAsync(Uri source, CancellationToken cancellationToken = default) =>
+            Task.FromResult<ISecretStore>(new FailingStore());
+    }
+
+    public sealed class SlowProvider : ISecretStoreProvider
+    {
+        public string Scheme => "slow";
+
+        public Task<ISecretStore> OpenAsync(Uri source, CancellationToken cancellationToken = default) =>
+            Task.FromResult<ISecretStore>(new SlowStore());
+    }
+
     private sealed class FixtureStore : ISecretStore
     {
         public Task<IReadOnlyDictionary<string, string>> LoadAsync(CancellationToken cancellationToken = default) =>
@@ -400,6 +558,40 @@ public sealed class SupprocomSecretsTests
 
         public Task DeleteAsync(string key, CancellationToken cancellationToken = default) =>
             Task.CompletedTask;
+    }
+
+    private sealed class FailingStore : ISecretStore
+    {
+        public Task<IReadOnlyDictionary<string, string>> LoadAsync(CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("secret-from-provider must not appear in diagnostics");
+
+        public Task SetAsync(string key, string value, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+
+        public Task DeleteAsync(string key, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+    }
+
+    private sealed class SlowStore : ISecretStore
+    {
+        public async Task<IReadOnlyDictionary<string, string>> LoadAsync(CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return new Dictionary<string, string>();
+        }
+
+        public Task SetAsync(string key, string value, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+
+        public Task DeleteAsync(string key, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+    }
+
+    private sealed class AuthOptions
+    {
+        public string? LocalApiKey { get; set; }
+
+        public string? Tenant { get; set; }
     }
 
     private sealed class TemporaryDirectory : IDisposable

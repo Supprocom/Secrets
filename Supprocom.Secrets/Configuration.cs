@@ -1,8 +1,9 @@
 using System.Collections;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using Supprocom.Secrets;
 
-namespace Supprocom.Secrets;
+namespace Microsoft.Extensions.Configuration;
 
 public static class SupprocomSecretsConfigurationExtensions
 {
@@ -289,10 +290,13 @@ internal static class ProviderResolver
             }
 
             var providers = new List<ISecretStoreProvider>();
+            var schemes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (JsonElement item in providerArray.EnumerateArray())
             {
-                if (!item.TryGetProperty("assembly", out JsonElement assemblyElement) ||
+                if (!item.TryGetProperty("scheme", out JsonElement schemeElement) ||
+                    !item.TryGetProperty("assembly", out JsonElement assemblyElement) ||
                     !item.TryGetProperty("providerType", out JsonElement typeElement) ||
+                    schemeElement.ValueKind != JsonValueKind.String ||
                     assemblyElement.ValueKind != JsonValueKind.String ||
                     typeElement.ValueKind != JsonValueKind.String)
                 {
@@ -303,6 +307,14 @@ internal static class ProviderResolver
 
                 string assemblyName = assemblyElement.GetString()!;
                 string typeName = typeElement.GetString()!;
+                string scheme = schemeElement.GetString()!;
+                if (string.IsNullOrWhiteSpace(scheme) || !schemes.Add(scheme))
+                {
+                    throw new SupprocomSecretsException(
+                        "InvalidProviderManifest",
+                        $"Provider manifest '{path}' contains a duplicate or empty provider scheme.");
+                }
+
                 Type? providerType = Type.GetType($"{typeName}, {assemblyName}", throwOnError: false);
                 if (providerType is null)
                 {
@@ -335,6 +347,13 @@ internal static class ProviderResolver
                     throw new SupprocomSecretsException(
                         "ProviderInstantiationFailed",
                         $"Provider manifest '{path}' names a provider that cannot be constructed.");
+                }
+
+                if (!provider.Scheme.Equals(scheme, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new SupprocomSecretsException(
+                        "InvalidProviderManifest",
+                        $"Provider manifest '{path}' declares scheme '{scheme}' for a provider with a different stable scheme.");
                 }
 
                 providers.Add(provider);
