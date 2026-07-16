@@ -74,7 +74,8 @@ public sealed class PackageAcceptanceTests
             "dotnet",
             "publish Consumer.csproj -c Release --no-restore --nologo",
             consumer,
-            expectedExitCode: 0);
+            expectedExitCode: 0,
+            environment: NuGetEnvironment(consumer));
         string publishEnvironment = Path.Combine(consumer, "bin", "Release", "net10.0", "publish", "Environment");
         Assert.That(File.Exists(Path.Combine(publishEnvironment, ".env.template")), Is.True);
         Assert.That(File.Exists(Path.Combine(publishEnvironment, ".dev.env.template")), Is.True);
@@ -93,7 +94,12 @@ public sealed class PackageAcceptanceTests
         string baseTemplate = Path.Combine(consumer, "Environment", ".env.template");
         Write(baseTemplate, "Smoke__Base=changed\n");
         File.SetLastWriteTimeUtc(baseTemplate, DateTime.UtcNow.AddSeconds(2));
-        RunProcess("dotnet", "publish Consumer.csproj -c Release --no-restore --nologo", consumer, expectedExitCode: 0);
+        RunProcess(
+            "dotnet",
+            "publish Consumer.csproj -c Release --no-restore --nologo",
+            consumer,
+            expectedExitCode: 0,
+            environment: NuGetEnvironment(consumer));
         Assert.That(File.ReadAllText(Path.Combine(publishEnvironment, ".env.template")), Is.EqualTo("Smoke__Base=changed\n"));
         Assert.That(File.ReadAllText(Path.Combine(publishEnvironment, ".env")), Is.EqualTo(activeBeforeTemplateUpdate));
 
@@ -105,7 +111,8 @@ public sealed class PackageAcceptanceTests
             "dotnet",
             "publish Consumer.csproj -c Release --no-restore --nologo",
             replacement,
-            expectedExitCode: 0);
+            expectedExitCode: 0,
+            environment: NuGetEnvironment(replacement));
         string replacementPublish = Path.Combine(replacement, "bin", "Release", "net10.0", "publish");
         ProcessResult replacementRun = RunProcess(
             "dotnet",
@@ -120,8 +127,17 @@ public sealed class PackageAcceptanceTests
         CreateConsumer(ambiguous, packagePath);
         Write(Path.Combine(ambiguous, "Environment", ".dev.env.template"), "Smoke__Overlay=overlay\n");
         Write(Path.Combine(ambiguous, "Environment", ".env.development.template"), "Smoke__Mode=replacement\n");
-        RunProcess("dotnet", "restore Consumer.csproj --configfile NuGet.config --nologo", ambiguous, expectedExitCode: 0);
-        ProcessResult failedBuild = RunProcess("dotnet", "build Consumer.csproj --no-restore --nologo", ambiguous);
+        RunProcess(
+            "dotnet",
+            "restore Consumer.csproj --configfile NuGet.config --nologo",
+            ambiguous,
+            expectedExitCode: 0,
+            environment: NuGetEnvironment(ambiguous));
+        ProcessResult failedBuild = RunProcess(
+            "dotnet",
+            "build Consumer.csproj --no-restore --nologo",
+            ambiguous,
+            environment: NuGetEnvironment(ambiguous));
         Assert.That(failedBuild.ExitCode, Is.Not.EqualTo(0));
         Assert.That(failedBuild.CombinedOutput, Does.Contain(".dev.env.template"));
         Assert.That(failedBuild.CombinedOutput, Does.Contain(".env.development.template"));
@@ -174,9 +190,26 @@ public sealed class PackageAcceptanceTests
 
     private static void RestoreAndBuild(string directory)
     {
-        RunProcess("dotnet", "restore Consumer.csproj --configfile NuGet.config --nologo", directory, expectedExitCode: 0);
-        RunProcess("dotnet", "build Consumer.csproj --no-restore --nologo", directory, expectedExitCode: 0);
+        IReadOnlyDictionary<string, string> environment = NuGetEnvironment(directory);
+        RunProcess(
+            "dotnet",
+            "restore Consumer.csproj --configfile NuGet.config --nologo",
+            directory,
+            expectedExitCode: 0,
+            environment: environment);
+        RunProcess(
+            "dotnet",
+            "build Consumer.csproj --no-restore --nologo",
+            directory,
+            expectedExitCode: 0,
+            environment: environment);
     }
+
+    private static IReadOnlyDictionary<string, string> NuGetEnvironment(string directory) =>
+        new Dictionary<string, string>
+        {
+            ["NUGET_PACKAGES"] = Path.Combine(directory, ".packages")
+        };
 
     private static string GetPackagePath(string repository) =>
         Path.Combine(repository, "artifacts", "verification", $"Supprocom.Secrets.{PackageVersion}.nupkg");
