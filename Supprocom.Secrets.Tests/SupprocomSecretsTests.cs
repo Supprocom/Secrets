@@ -383,6 +383,10 @@ public sealed class SupprocomSecretsTests
             })
             .BuildServiceProvider();
         ISecretFileProtectionManager manager = services.GetRequiredService<ISecretFileProtectionManager>();
+        SupprocomSecretFileStore concrete = services.GetRequiredService<SupprocomSecretFileStore>();
+        Assert.That(concrete, Is.SameAs(services.GetRequiredService<ISecretDocumentStore>()));
+        Assert.That(concrete, Is.SameAs(manager));
+        Assert.Throws<InvalidOperationException>(() => services.GetRequiredService<ISecretStore>());
 
         Assert.That(await manager.GetStateAsync(), Is.EqualTo(SecretFileProtectionState.Protected));
         await manager.UnprotectAsync();
@@ -397,6 +401,52 @@ public sealed class SupprocomSecretsTests
 
         IReadOnlyDictionary<string, string> restarted = await new SupprocomSecretFileStore(options).LoadAsync();
         Assert.That(restarted["Install:CertificateAlias"], Is.EqualTo("legacy-windows"));
+    }
+
+    [Test]
+    public async Task ProtectionStateDoesNotReadOrCreateAnInstallationKey()
+    {
+        using var directory = new TemporaryDirectory();
+        string activePath = Path.Combine(directory.Path, ".env");
+        string keyPath = Path.Combine(directory.Path, ".missing.key");
+        File.WriteAllBytes(activePath, Convert.FromBase64String(LegacySharpClawFixtureEnvelopeBase64));
+        var keyStore = new ThrowingKeyAccessStore();
+        var store = new SupprocomSecretFileStore(new SupprocomSecretFileOptions
+        {
+            Directory = directory.Path,
+            Protection = SecretFileProtection.InstallationBoundAesGcm,
+            InstallationKeyPath = keyPath,
+            InstallationKeyStore = keyStore
+        });
+
+        Assert.That(await store.GetStateAsync(), Is.EqualTo(SecretFileProtectionState.Protected));
+        Assert.That(keyStore.GetOrCreateCalls, Is.EqualTo(0));
+        Assert.That(keyStore.ReadExistingCalls, Is.EqualTo(0));
+        Assert.That(File.Exists(keyPath), Is.False);
+    }
+
+    [Test]
+    public async Task ProtectionManagerWrongValidLengthKeyLeavesCiphertextUntouched()
+    {
+        using var directory = new TemporaryDirectory();
+        string keyPath = Path.Combine(directory.Path, "installation.key");
+        File.WriteAllBytes(keyPath, Enumerable.Range(33, 32).Select(value => (byte)value).ToArray());
+        string activePath = Path.Combine(directory.Path, ".env");
+        byte[] original = Convert.FromBase64String(LegacySharpClawFixtureEnvelopeBase64);
+        File.WriteAllBytes(activePath, original);
+        var store = new SupprocomSecretFileStore(new SupprocomSecretFileOptions
+        {
+            Directory = directory.Path,
+            Protection = SecretFileProtection.InstallationBoundAesGcm,
+            InstallationKeyPath = keyPath
+        });
+
+        SupprocomSecretsException exception = Assert.ThrowsAsync<SupprocomSecretsException>(
+            async () => await store.UnprotectAsync())!;
+        Assert.That(exception.Code, Is.EqualTo("ProtectedDocumentAuthentication"));
+        Assert.That(exception.Message, Does.Not.Contain("AQID"));
+        Assert.That(File.ReadAllBytes(activePath), Is.EqualTo(original));
+        Assert.That(Directory.GetFiles(directory.Path, ".supprocom-*.tmp"), Is.Empty);
     }
 
     [Test]
@@ -1194,6 +1244,74 @@ public sealed class SupprocomSecretsTests
 
     #pragma warning disable CA1416
     [Test]
+    public async Task UnprotectPreservesRestrictiveUnixFileMode()
+    {
+        if (OperatingSystem.IsWindows() ||
+            (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS() && !OperatingSystem.IsFreeBSD()))
+            Assert.Ignore("The active-file mode contract is Unix-specific.");
+
+        using var directory = new TemporaryDirectory();
+        string keyPath = Path.Combine(directory.Path, "installation.key");
+        string activePath = Path.Combine(directory.Path, ".env");
+        File.WriteAllBytes(keyPath, Enumerable.Range(1, 32).Select(value => (byte)value).ToArray());
+        File.WriteAllBytes(activePath, Convert.FromBase64String(LegacySharpClawFixtureEnvelopeBase64));
+        UnixFileMode mode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        File.SetUnixFileMode(activePath, mode);
+
+        await new SupprocomSecretFileStore(new SupprocomSecretFileOptions
+        {
+            Directory = directory.Path,
+            Protection = SecretFileProtection.InstallationBoundAesGcm,
+            InstallationKeyPath = keyPath
+        }).UnprotectAsync();
+
+        Assert.That(File.GetUnixFileMode(activePath), Is.EqualTo(mode));
+    }
+
+    [Test]
+    public async Task UnprotectPreservesRestrictiveWindowsAcl()
+    {
+        if (!OperatingSystem.IsWindows())
+            Assert.Ignore("The active-file ACL contract is Windows-specific.");
+
+        using var directory = new TemporaryDirectory();
+        string keyPath = Path.Combine(directory.Path, "installation.key");
+        string activePath = Path.Combine(directory.Path, ".env");
+        File.WriteAllBytes(keyPath, Enumerable.Range(1, 32).Select(value => (byte)value).ToArray());
+        File.WriteAllBytes(activePath, Convert.FromBase64String(LegacySharpClawFixtureEnvelopeBase64));
+        using WindowsIdentity identity = WindowsIdentity.GetCurrent();
+        SecurityIdentifier currentUser = identity.User
+            ?? throw new InvalidOperationException("The test identity has no SID.");
+        var everyone = new SecurityIdentifier(WellKnownSidType.WorldSid, null);
+        var initial = new FileSecurity();
+        initial.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        initial.AddAccessRule(new FileSystemAccessRule(
+            currentUser,
+            FileSystemRights.FullControl,
+            AccessControlType.Allow));
+        new FileInfo(activePath).SetAccessControl(initial);
+
+        await new SupprocomSecretFileStore(new SupprocomSecretFileOptions
+        {
+            Directory = directory.Path,
+            Protection = SecretFileProtection.InstallationBoundAesGcm,
+            InstallationKeyPath = keyPath
+        }).UnprotectAsync();
+
+        FileSecurity after = new FileInfo(activePath).GetAccessControl(AccessControlSections.Access);
+        var rules = after
+            .GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier))
+            .Cast<FileSystemAccessRule>()
+            .ToArray();
+        Assert.That(
+            rules.Any(rule => rule.IdentityReference is SecurityIdentifier sid && sid.Equals(currentUser)),
+            Is.True);
+        Assert.That(
+            rules.Any(rule => rule.IdentityReference is SecurityIdentifier sid && sid.Equals(everyone)),
+            Is.False);
+    }
+
+    [Test]
     public async Task LegacyKeyMigrationReappliesRestrictiveUnixPermissions()
     {
         if (OperatingSystem.IsWindows() ||
@@ -1737,6 +1855,25 @@ public sealed class SupprocomSecretsTests
             throw new SupprocomSecretsException(
                 "InstallationKeyUnavailable",
                 "The test installation key is unavailable.");
+    }
+
+    private sealed class ThrowingKeyAccessStore : IInstallationKeyStore
+    {
+        public int GetOrCreateCalls { get; private set; }
+
+        public int ReadExistingCalls { get; private set; }
+
+        public Task<byte[]> GetOrCreateKeyAsync(CancellationToken cancellationToken = default)
+        {
+            GetOrCreateCalls++;
+            throw new InvalidOperationException("GetOrCreateKeyAsync must not run during state detection.");
+        }
+
+        public Task<byte[]> ReadExistingKeyAsync(CancellationToken cancellationToken = default)
+        {
+            ReadExistingCalls++;
+            throw new InvalidOperationException("ReadExistingKeyAsync must not run during state detection.");
+        }
     }
 
     private sealed class BlockingInstallationKeyStore : IInstallationKeyStore
