@@ -135,6 +135,8 @@ public sealed class FileInstallationKeyStore : IInstallationKeyStore
 
     private async Task<byte[]> ReadKeyAsync(CancellationToken cancellationToken)
     {
+        RestrictKeyPermissions(_path);
+
         byte[] key;
         try
         {
@@ -162,16 +164,7 @@ public sealed class FileInstallationKeyStore : IInstallationKeyStore
                 $"Installation key file '{_path}' must contain a 32-byte key.");
         }
 
-        try
-        {
-            RestrictKeyPermissions(_path);
-            return key;
-        }
-        catch
-        {
-            CryptographicOperations.ZeroMemory(key);
-            throw;
-        }
+        return key;
     }
 
     private static async Task RetryConcurrentReadAsync(
