@@ -212,6 +212,7 @@ public sealed class PackageAcceptanceTests
               <packageSources>
                 <clear />
                 <add key="verification" value="{{Path.GetDirectoryName(packagePath)!}}" />
+                <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
               </packageSources>
             </configuration>
             """,
