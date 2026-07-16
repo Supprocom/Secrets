@@ -59,8 +59,7 @@ internal static class JsonWithCommentsImporter
                 foreach (KeyValuePair<string, string> item in SecretDocumentParser.FlattenJsonElement(
                              property.Value,
                              path,
-                             "SUPPROCOM_LOCAL_OPTIONS",
-                             result.LocalOptionNullValues))
+                             "SUPPROCOM_LOCAL_OPTIONS"))
                 {
                     result.LocalOptions.Add(item.Key, item.Value);
                 }
@@ -91,8 +90,7 @@ internal static class JsonWithCommentsImporter
         values = SecretDocumentParser.FlattenJsonElement(
             wrapper.RootElement,
             path,
-            "JSON import",
-            result.NullValues);
+            "JSON import");
         foreach (KeyValuePair<string, string> item in values)
         {
             if (!result.Values.TryAdd(item.Key, item.Value))

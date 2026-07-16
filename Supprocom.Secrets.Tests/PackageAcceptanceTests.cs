@@ -9,7 +9,7 @@ namespace Supprocom.Secrets.Tests;
 [TestFixture]
 public sealed class PackageAcceptanceTests
 {
-    private const string PackageVersion = "0.1.9";
+    private const string PackageVersion = "0.1.10";
 
     [Test]
     [Explicit("Requires a freshly packed source-mapped Supprocom.Secrets package.")]

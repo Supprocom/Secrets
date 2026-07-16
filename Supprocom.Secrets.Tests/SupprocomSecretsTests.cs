@@ -5,7 +5,6 @@ using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -272,13 +271,6 @@ public sealed class SupprocomSecretsTests
             """);
         File.WriteAllBytes(Path.Combine(directory.Path, ".env"), original);
 
-        var options = new SupprocomSecretFileOptions
-        {
-            Directory = directory.Path,
-            Import = SecretFileImport.JsonWithCommentsOnce
-        };
-        var store = new SupprocomSecretFileStore(options);
-
         IConfiguration actual = new ConfigurationBuilder()
             .AddSupprocomSecrets(configurationOptions =>
             {
@@ -287,23 +279,58 @@ public sealed class SupprocomSecretsTests
                 configurationOptions.FileOverridesProcessEnvironment = true;
             })
             .Build();
-        IReadOnlyDictionary<string, string?> expected = MicrosoftJsonConfigurationProjection(original);
-        HashSet<string> actualKeys = actual.AsEnumerable()
-            .Where(item => item.Value is not null || expected.ContainsKey(item.Key))
-            .Select(item => item.Key)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        Assert.That(actualKeys, Is.EquivalentTo(expected.Keys));
-        foreach (KeyValuePair<string, string?> item in expected)
-            Assert.That(actual[item.Key], Is.EqualTo(item.Value), item.Key);
-        Assert.That(actual["SUPPROCOM_LOCAL_OPTIONS:CertificateAlias"], Is.Null);
+        IReadOnlyDictionary<string, string> expected = CanonicalImportProjection(original);
+        AssertConfigurationProjection(actual, expected);
+
+        IReadOnlyDictionary<string, string> restartedValues = await new SupprocomSecretFileStore(
+                new SupprocomSecretFileOptions { Directory = directory.Path })
+            .LoadAsync();
+        Assert.That(restartedValues.Keys, Is.EquivalentTo(expected.Keys));
+        foreach (KeyValuePair<string, string> item in expected)
+            Assert.That(restartedValues[item.Key], Is.EqualTo(item.Value), item.Key);
+
+        IConfiguration restarted = new ConfigurationBuilder()
+            .AddSupprocomSecrets(configurationOptions =>
+            {
+                configurationOptions.File.Directory = directory.Path;
+                configurationOptions.FileOverridesProcessEnvironment = true;
+            })
+            .Build();
+        AssertConfigurationProjection(restarted, expected);
 
         string[] preserved = Directory.GetFiles(directory.Path, ".pre-supprocom-import-*");
         Assert.That(preserved, Has.Length.EqualTo(1));
         Assert.That(File.ReadAllBytes(preserved[0]), Is.EqualTo(original));
         Assert.That(File.ReadAllText(Path.Combine(directory.Path, ".env")), Does.Not.StartWith("{"));
 
-        await store.LoadAsync();
         Assert.That(Directory.GetFiles(directory.Path, ".pre-supprocom-import-*"), Has.Length.EqualTo(1));
+    }
+
+    [TestCase("{\"A\":1,\"a\":null}")]
+    [TestCase("{\"A\":null,\"a\":1}")]
+    [TestCase("{\"A\":1,\"a\":{}}")]
+    [TestCase("{\"A\":{},\"a\":1}")]
+    [TestCase("{\"Parent\":{\"Value\":1},\"parent\":{\"value\":null}}")]
+    [TestCase("{\"Parent\":{\"Value\":null},\"PARENT\":{\"VALUE\":1}}")]
+    public void JsonImportRejectsCaseInsensitiveValueAndEmptyPathCollisions(string json)
+    {
+        using var directory = new TemporaryDirectory();
+        byte[] original = Encoding.UTF8.GetBytes(json);
+        string activePath = Path.Combine(directory.Path, ".env");
+        File.WriteAllBytes(activePath, original);
+
+        SupprocomSecretsException exception = Assert.ThrowsAsync<SupprocomSecretsException>(
+            async () => await new SupprocomSecretFileStore(
+                    new SupprocomSecretFileOptions
+                    {
+                        Directory = directory.Path,
+                        Import = SecretFileImport.JsonWithCommentsOnce
+                    })
+                .LoadAsync())!;
+
+        Assert.That(exception.Code, Is.EqualTo("FlatteningCollision"));
+        Assert.That(File.ReadAllBytes(activePath), Is.EqualTo(original));
+        Assert.That(Directory.GetFiles(directory.Path, ".pre-supprocom-import-*"), Is.Empty);
     }
 
     [Test]
@@ -1043,98 +1070,100 @@ public sealed class SupprocomSecretsTests
         Assert.That(provider.Opened, Is.True);
     }
 
-    private static IReadOnlyDictionary<string, string?> MicrosoftJsonConfigurationProjection(byte[] source)
+    private static IReadOnlyDictionary<string, string> CanonicalImportProjection(byte[] source)
     {
-        string text = Encoding.UTF8.GetString(source);
-        using var ordinaryStream = new MemoryStream(source, writable: false);
-        IConfiguration ordinary = new ConfigurationBuilder()
-            .AddJsonStream(ordinaryStream)
-            .Build();
-        JsonNode root = JsonNode.Parse(
-                text,
-                nodeOptions: null,
-                documentOptions: new JsonDocumentOptions
-                {
-                    AllowTrailingCommas = true,
-                    CommentHandling = JsonCommentHandling.Skip
-                })
-            ?? throw new InvalidOperationException("The JSON projection fixture did not produce a root node.");
-        var expected = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-        if (root is JsonObject rootObject)
+        using JsonDocument document = JsonDocument.Parse(
+            source,
+            new JsonDocumentOptions
+            {
+                AllowTrailingCommas = true,
+                CommentHandling = JsonCommentHandling.Skip
+            });
+        var expected = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (JsonProperty property in document.RootElement.EnumerateObject())
         {
-            foreach (KeyValuePair<string, JsonNode?> property in rootObject)
-            {
-                if (property.Key.Equals("SUPPROCOM_LOCAL_OPTIONS", StringComparison.OrdinalIgnoreCase))
-                    continue;
+            if (property.Name.Equals("SUPPROCOM_LOCAL_OPTIONS", StringComparison.OrdinalIgnoreCase))
+                continue;
 
-                AddMicrosoftProjection(
-                    expected,
-                    ordinary,
-                    property.Value,
-                    property.Key);
-            }
+            AddCanonicalImportProjection(expected, property.Value, property.Name);
+        }
 
-            if (rootObject.TryGetPropertyValue("SUPPROCOM_LOCAL_OPTIONS", out JsonNode? localOptions) &&
-                localOptions is not null)
-            {
-                using var localStream = new MemoryStream(
-                    Encoding.UTF8.GetBytes(localOptions.ToJsonString()),
-                    writable: false);
-                IConfiguration local = new ConfigurationBuilder()
-                    .AddJsonStream(localStream)
-                    .Build();
-                AddMicrosoftProjection(expected, local, localOptions, string.Empty);
-            }
+        if (document.RootElement.TryGetProperty("SUPPROCOM_LOCAL_OPTIONS", out JsonElement localOptions) &&
+            localOptions.ValueKind == JsonValueKind.Object)
+        {
+            AddCanonicalImportProjection(expected, localOptions, string.Empty);
         }
 
         return expected;
     }
 
-    private static void AddMicrosoftProjection(
-        IDictionary<string, string?> expected,
-        IConfiguration configuration,
-        JsonNode? node,
+    private static void AddCanonicalImportProjection(
+        IDictionary<string, string> expected,
+        JsonElement element,
         string path)
     {
-        if (node is null)
+        switch (element.ValueKind)
         {
-            expected[path] = configuration[path];
-            return;
-        }
-
-        if (node is JsonObject objectNode)
-        {
-            if (objectNode.Count == 0)
+            case JsonValueKind.Object:
             {
-                if (path.Length != 0)
-                    expected[path] = configuration[path];
+                if (!element.EnumerateObject().Any())
+                {
+                    if (path.Length != 0)
+                        expected[path] = string.Empty;
+                    return;
+                }
+
+                foreach (JsonProperty property in element.EnumerateObject())
+                {
+                    string childPath = path.Length == 0 ? property.Name : $"{path}:{property.Name}";
+                    AddCanonicalImportProjection(expected, property.Value, childPath);
+                }
+
                 return;
             }
 
-            foreach (KeyValuePair<string, JsonNode?> property in objectNode)
+            case JsonValueKind.Array:
             {
-                string childPath = path.Length == 0 ? property.Key : $"{path}:{property.Key}";
-                AddMicrosoftProjection(expected, configuration, property.Value, childPath);
-            }
+                if (element.GetArrayLength() == 0)
+                {
+                    expected[path] = string.Empty;
+                    return;
+                }
 
-            return;
-        }
+                int index = 0;
+                foreach (JsonElement item in element.EnumerateArray())
+                    AddCanonicalImportProjection(expected, item, $"{path}:{index++}");
 
-        if (node is JsonArray arrayNode)
-        {
-            if (arrayNode.Count == 0)
-            {
-                expected[path] = configuration[path];
                 return;
             }
 
-            for (int index = 0; index < arrayNode.Count; index++)
-                AddMicrosoftProjection(expected, configuration, arrayNode[index], $"{path}:{index}");
-
-            return;
+            case JsonValueKind.String:
+                expected[path] = element.GetString() ?? string.Empty;
+                return;
+            case JsonValueKind.Number:
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+                expected[path] = element.GetRawText();
+                return;
+            case JsonValueKind.Null:
+                expected[path] = string.Empty;
+                return;
+            default:
+                throw new InvalidOperationException($"Unsupported JSON value kind {element.ValueKind}.");
         }
+    }
 
-        expected[path] = configuration[path];
+    private static void AssertConfigurationProjection(
+        IConfiguration configuration,
+        IReadOnlyDictionary<string, string> expected)
+    {
+        HashSet<string> actualKeys = configuration.AsEnumerable()
+            .Where(item => item.Value is not null || expected.ContainsKey(item.Key))
+            .Select(item => item.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Assert.That(actualKeys, Is.EquivalentTo(expected.Keys));
+        foreach (KeyValuePair<string, string> item in expected)
+            Assert.That(configuration[item.Key], Is.EqualTo(item.Value), item.Key);
     }
 
     private static void AssertLocalJsonTypes(string directory, string? expectedNestedValue)

@@ -139,7 +139,6 @@ internal sealed class SecretFileRuntime
 
         string? source = null;
         var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var nullValues = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (PhysicalFile file in files)
         {
             if (file.Document.SourceDirective is not null)
@@ -155,16 +154,7 @@ internal sealed class SecretFileRuntime
             }
 
             foreach (KeyValuePair<string, string> item in file.Document.Values)
-            {
-                nullValues.Remove(item.Key);
                 values[item.Key] = item.Value;
-            }
-
-            foreach (string key in file.Document.NullValues)
-            {
-                values.Remove(key);
-                nullValues.Add(key);
-            }
         }
 
         if (source is not null && values.Count != 0)
@@ -175,33 +165,14 @@ internal sealed class SecretFileRuntime
         }
 
         var localOptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var localOptionNullValues = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (PhysicalFile file in files)
         {
             foreach (KeyValuePair<string, string> item in file.Document.LocalOptions)
-            {
-                localOptionNullValues.Remove(item.Key);
                 localOptions[item.Key] = item.Value;
-            }
-
-            foreach (string key in file.Document.LocalOptionNullValues)
-            {
-                localOptions.Remove(key);
-                localOptionNullValues.Add(key);
-            }
         }
 
         foreach (KeyValuePair<string, string> item in localOptions)
-        {
-            nullValues.Remove(item.Key);
             values[item.Key] = item.Value;
-        }
-
-        foreach (string key in localOptionNullValues)
-        {
-            values.Remove(key);
-            nullValues.Add(key);
-        }
 
         if (source is not null)
             ValidateSourceDirective(source);
@@ -210,8 +181,6 @@ internal sealed class SecretFileRuntime
             values,
             source,
             localOptions,
-            nullValues,
-            localOptionNullValues,
             files.Count == 0 ? null : files[^1].Document);
     }
 
@@ -278,8 +247,7 @@ internal sealed class SecretFileRuntime
                     "The pointer file cannot be mutated through the built-in local store.");
             }
 
-            bool isLocal = document.LocalOptions.ContainsKey(normalizedKey) ||
-                document.LocalOptionNullValues.Contains(normalizedKey);
+            bool isLocal = document.LocalOptions.ContainsKey(normalizedKey);
             if (isLocal)
             {
                 JsonNode local = document.LocalOptionsNode
@@ -294,12 +262,10 @@ internal sealed class SecretFileRuntime
                 }
 
                 document.LocalOptions.Clear();
-                document.LocalOptionNullValues.Clear();
                 foreach (KeyValuePair<string, string> item in SecretDocumentParser.FlattenJsonNode(
                              local,
                              activePath,
-                             "SUPPROCOM_LOCAL_OPTIONS",
-                             document.LocalOptionNullValues))
+                             "SUPPROCOM_LOCAL_OPTIONS"))
                 {
                     document.LocalOptions[item.Key] = item.Value;
                 }
@@ -402,8 +368,6 @@ internal sealed class SecretFileRuntime
                 string canonical = SecretDocumentSerializer.Serialize(imported);
                 ParsedSecretDocument reparsed = SecretDocumentParser.Parse(canonical, activePath);
                 ValidateDocumentSemantics(reparsed);
-                reparsed.NullValues.UnionWith(imported.NullValues);
-                reparsed.LocalOptionNullValues.UnionWith(imported.LocalOptionNullValues);
                 await PreserveOriginalAsync(activePath, originalBytes, cancellationToken).ConfigureAwait(false);
                 await WriteAtomicAsync(activePath, canonical, null, cancellationToken).ConfigureAwait(false);
                 return new PhysicalFile(reparsed, activePath);
@@ -841,8 +805,7 @@ internal sealed class SecretFileRuntime
 
     private static void ValidateDocumentSemantics(ParsedSecretDocument document)
     {
-        if (document.SourceDirective is not null &&
-            (document.Values.Count != 0 || document.NullValues.Count != 0))
+        if (document.SourceDirective is not null && document.Values.Count != 0)
         {
             throw new SupprocomSecretsException(
                 "PointerFileContainsConfiguration",
@@ -999,6 +962,4 @@ internal sealed record FileLoadResult(
     Dictionary<string, string> Values,
     string? SourceDirective,
     Dictionary<string, string> LocalOptions,
-    HashSet<string> NullValues,
-    HashSet<string> LocalOptionNullValues,
     ParsedSecretDocument? LastDocument);

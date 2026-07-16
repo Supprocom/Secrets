@@ -19,11 +19,7 @@ internal sealed class ParsedSecretDocument
 
     public Dictionary<string, string> Values { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-    public HashSet<string> NullValues { get; } = new(StringComparer.OrdinalIgnoreCase);
-
     public Dictionary<string, string> LocalOptions { get; } = new(StringComparer.OrdinalIgnoreCase);
-
-    public HashSet<string> LocalOptionNullValues { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public bool HasLocalOptions { get; set; }
 
@@ -86,12 +82,10 @@ internal static class SecretDocumentParser
 
                 LocalOptionsRead local = ReadLocalOptions(value, lines, index, path);
                 result.LocalOptions.Clear();
-                result.LocalOptionNullValues.Clear();
                 foreach (KeyValuePair<string, string> item in FlattenJsonObject(
                              local.Json,
                              path,
-                             "SUPPROCOM_LOCAL_OPTIONS",
-                             result.LocalOptionNullValues))
+                             "SUPPROCOM_LOCAL_OPTIONS"))
                 {
                     result.LocalOptions.Add(item.Key, item.Value);
                 }
@@ -137,42 +131,37 @@ internal static class SecretDocumentParser
     public static Dictionary<string, string> FlattenJsonObject(
         string json,
         string path,
-        string context,
-        ISet<string>? nullValues = null)
+        string context)
     {
         using JsonDocument document = ParseJsonDocument(json, path, context);
         if (document.RootElement.ValueKind != JsonValueKind.Object)
             throw Error("InvalidJsonObject", $"{context} in '{path}' must be a JSON object.");
 
         var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        ISet<string> nullPaths = nullValues ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        FlattenObject(document.RootElement, prefix: null, values, path, context, nullPaths);
+        FlattenObject(document.RootElement, prefix: null, values, path, context);
         return values;
     }
 
     public static Dictionary<string, string> FlattenJsonElement(
         JsonElement element,
         string path,
-        string context,
-        ISet<string>? nullValues = null)
+        string context)
     {
         if (element.ValueKind != JsonValueKind.Object)
             throw Error("InvalidJsonObject", $"{context} in '{path}' must be a JSON object.");
 
         var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        ISet<string> nullPaths = nullValues ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        FlattenObject(element, prefix: null, values, path, context, nullPaths);
+        FlattenObject(element, prefix: null, values, path, context);
         return values;
     }
 
     internal static Dictionary<string, string> FlattenJsonNode(
         JsonNode node,
         string path,
-        string context,
-        ISet<string>? nullValues = null)
+        string context)
     {
         ArgumentNullException.ThrowIfNull(node);
-        return FlattenJsonObject(node.ToJsonString(), path, context, nullValues);
+        return FlattenJsonObject(node.ToJsonString(), path, context);
     }
 
     public static bool TryParseJsonObject(
@@ -420,18 +409,17 @@ internal static class SecretDocumentParser
         string? prefix,
         IDictionary<string, string> values,
         string path,
-        string context,
-        ISet<string>? nullValues)
+        string context)
     {
         if (!element.EnumerateObject().Any())
         {
             if (prefix is not null)
-                AddNull(values, nullValues, prefix, path, context);
+                AddFlattened(values, prefix, string.Empty, path, context);
             return;
         }
 
         foreach (JsonProperty property in element.EnumerateObject())
-            Flatten(Join(prefix, property.Name), property.Value, values, path, context, nullValues);
+            Flatten(Join(prefix, property.Name), property.Value, values, path, context);
     }
 
     private static void Flatten(
@@ -439,38 +427,37 @@ internal static class SecretDocumentParser
         JsonElement element,
         IDictionary<string, string> values,
         string path,
-        string context,
-        ISet<string>? nullValues)
+        string context)
     {
         switch (element.ValueKind)
         {
             case JsonValueKind.Object:
-                FlattenObject(element, prefix, values, path, context, nullValues);
+                FlattenObject(element, prefix, values, path, context);
                 return;
             case JsonValueKind.Array:
             {
                 if (element.GetArrayLength() == 0)
                 {
-                    AddFlattened(values, nullValues, prefix, string.Empty, path, context);
+                    AddFlattened(values, prefix, string.Empty, path, context);
                     return;
                 }
 
                 int index = 0;
                 foreach (JsonElement item in element.EnumerateArray())
-                    Flatten($"{prefix}:{index++}", item, values, path, context, nullValues);
+                    Flatten($"{prefix}:{index++}", item, values, path, context);
 
                 return;
             }
             case JsonValueKind.String:
-                AddFlattened(values, nullValues, prefix, element.GetString() ?? string.Empty, path, context);
+                AddFlattened(values, prefix, element.GetString() ?? string.Empty, path, context);
                 return;
             case JsonValueKind.Number:
             case JsonValueKind.True:
             case JsonValueKind.False:
-                AddFlattened(values, nullValues, prefix, element.ToString(), path, context);
+                AddFlattened(values, prefix, element.GetRawText(), path, context);
                 return;
             case JsonValueKind.Null:
-                AddNull(values, nullValues, prefix, path, context);
+                AddFlattened(values, prefix, string.Empty, path, context);
                 return;
             default:
                 throw Error("InvalidJsonValue", $"{context} in '{path}' contains an unsupported JSON value.");
@@ -479,30 +466,13 @@ internal static class SecretDocumentParser
 
     private static void AddFlattened(
         IDictionary<string, string> values,
-        ISet<string>? nullValues,
         string key,
         string value,
         string path,
         string context)
     {
         string normalized = NormalizeConfigurationKey(key);
-        if (nullValues?.Contains(normalized) == true || !values.TryAdd(normalized, value))
-        {
-            throw Error(
-                "FlatteningCollision",
-                $"{context} in '{path}' contains duplicate configuration path '{normalized}'.");
-        }
-    }
-
-    private static void AddNull(
-        IDictionary<string, string> values,
-        ISet<string>? nullValues,
-        string key,
-        string path,
-        string context)
-    {
-        string normalized = NormalizeConfigurationKey(key);
-        if (values.ContainsKey(normalized) || nullValues?.Add(normalized) == false)
+        if (!values.TryAdd(normalized, value))
         {
             throw Error(
                 "FlatteningCollision",
