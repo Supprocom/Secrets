@@ -179,6 +179,7 @@ internal sealed class SecretFileRuntime
 
     public async Task<string> ReadDocumentAsync(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         ValidateFileNames();
         Directory.CreateDirectory(DirectoryPath);
         PhysicalFile file = await LoadPhysicalAsync(
@@ -192,6 +193,7 @@ internal sealed class SecretFileRuntime
     public async Task ReplaceDocumentAsync(string document, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(document);
+        cancellationToken.ThrowIfCancellationRequested();
         ValidateFileNames();
         Directory.CreateDirectory(DirectoryPath);
         string activePath = Path.Combine(DirectoryPath, _fileOptions.ActiveName);
@@ -206,6 +208,7 @@ internal sealed class SecretFileRuntime
         bool delete,
         CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         ValidateFileNames();
         string normalizedKey = NormalizeMutationKey(key);
         Directory.CreateDirectory(DirectoryPath);

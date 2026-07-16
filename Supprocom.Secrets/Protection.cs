@@ -1,4 +1,6 @@
 using System.Security.Cryptography;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 
 namespace Supprocom.Secrets;
@@ -37,7 +39,7 @@ public sealed class FileInstallationKeyStore : IInstallationKeyStore
                 options: FileOptions.Asynchronous | FileOptions.WriteThrough);
             await stream.WriteAsync(key, cancellationToken).ConfigureAwait(false);
             await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-            TryRestrictUnixPermissions(_path);
+            RestrictKeyPermissions(_path);
             return key;
         }
         catch (IOException) when (File.Exists(_path))
@@ -58,11 +60,41 @@ public sealed class FileInstallationKeyStore : IInstallationKeyStore
                 $"Installation key file '{_path}' must contain a 32-byte key.");
         }
 
+        RestrictKeyPermissions(_path);
+
         return key;
     }
 
-    private static void TryRestrictUnixPermissions(string path)
+    private static void RestrictKeyPermissions(string path)
     {
+        if (OperatingSystem.IsWindows())
+        {
+            try
+            {
+                using WindowsIdentity identity = WindowsIdentity.GetCurrent();
+                SecurityIdentifier? user = identity.User;
+                if (user is null)
+                    throw new InvalidOperationException("The current Windows identity has no security identifier.");
+
+                var file = new FileInfo(path);
+                FileSecurity security = file.GetAccessControl();
+                security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+                security.SetAccessRule(new FileSystemAccessRule(
+                    user,
+                    FileSystemRights.FullControl,
+                    AccessControlType.Allow));
+                file.SetAccessControl(security);
+                return;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+            {
+                throw new SupprocomSecretsException(
+                    "InstallationKeyPermissions",
+                    $"Unable to restrict installation key permissions for '{path}'.",
+                    exception);
+            }
+        }
+
         if (!OperatingSystem.IsWindows())
         {
             try
