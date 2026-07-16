@@ -9,7 +9,7 @@ namespace Supprocom.Secrets.Tests;
 [TestFixture]
 public sealed class PackageAcceptanceTests
 {
-    private const string PackageVersion = "0.1.2";
+    private const string PackageVersion = "0.1.3";
 
     [Test]
     [Explicit("Requires a freshly packed source-mapped Supprocom.Secrets package.")]
@@ -176,6 +176,74 @@ public sealed class PackageAcceptanceTests
         Assert.That(File.ReadAllBytes(Path.Combine(environment, ".installation.key")), Has.Length.EqualTo(32));
         Assert.That(File.ReadAllBytes(Path.Combine(environment, ".env"))[0], Is.EqualTo(1));
         Assert.That(Directory.GetFiles(environment, ".pre-supprocom-import-*"), Has.Length.EqualTo(1));
+    }
+
+    [Test]
+    [Explicit("Requires a freshly packed source-mapped Supprocom.Secrets package.")]
+    public void FreshPackageReferenceDetachedDocumentConsumerUsesPublicCodec()
+    {
+        string repository = FindRepositoryRoot();
+        string packagePath = GetPackagePath(repository);
+        Assert.That(File.Exists(packagePath), Is.True, "Pack the current commit before running package acceptance.");
+
+        using var root = new TemporaryDirectory();
+        string consumer = Path.Combine(root.Path, "detached-consumer");
+        Directory.CreateDirectory(consumer);
+        Write(
+            Path.Combine(consumer, "Consumer.csproj"),
+            $$"""
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <OutputType>Exe</OutputType>
+                <TargetFramework>net10.0</TargetFramework>
+                <ImplicitUsings>enable</ImplicitUsings>
+                <Nullable>enable</Nullable>
+              </PropertyGroup>
+              <ItemGroup>
+                <PackageReference Include="Supprocom.Secrets" Version="{{PackageVersion}}" />
+              </ItemGroup>
+            </Project>
+            """,
+            encoding: new UTF8Encoding(false));
+        Write(
+            Path.Combine(consumer, "NuGet.config"),
+            $$"""
+            <configuration>
+              <packageSources>
+                <clear />
+                <add key="verification" value="{{Path.GetDirectoryName(packagePath)!}}" />
+              </packageSources>
+            </configuration>
+            """,
+            encoding: new UTF8Encoding(false));
+        Write(
+            Path.Combine(consumer, "Program.cs"),
+            """
+            using Supprocom.Secrets;
+
+            SupprocomSecretDocument document = SupprocomSecretDocument.Parse(
+                "Simple=one=two\nNested__Value=\"quoted # value\"\n");
+            var edited = document.Settings
+                .Select(setting => setting.Key == "Nested:Value"
+                    ? setting with { Value = "edited" }
+                    : setting)
+                .ToArray();
+            string serialized = SupprocomSecretDocument.Serialize(edited);
+            SupprocomSecretDocument reparsed = SupprocomSecretDocument.Parse(serialized);
+            string simple = reparsed.Settings.Single(setting => setting.Key == "Simple").Value;
+            string nested = reparsed.Settings.Single(setting => setting.Key == "Nested:Value").Value;
+            Console.WriteLine($"{simple}|{nested}");
+            """,
+            encoding: new UTF8Encoding(false));
+
+        RestoreAndBuild(consumer);
+        ProcessResult run = RunProcess(
+            "dotnet",
+            "Consumer.dll",
+            Path.Combine(consumer, "bin", "Debug", "net10.0"),
+            expectedExitCode: 0,
+            environment: NuGetEnvironment(consumer));
+        Assert.That(run.StandardOutput, Does.Contain("one=two|edited"));
     }
 
     private static void CreateProtectionConsumer(string directory, string packagePath)

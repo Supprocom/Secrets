@@ -1796,6 +1796,152 @@ public sealed class SupprocomSecretsTests
             Assert.That(value.GetString(), Is.EqualTo(expectedNestedValue));
     }
 
+    [Test]
+    public void DetachedDocumentUsesRuntimeParsingAndCanonicalRoundTrip()
+    {
+        const string dotenv = """
+            # comments and blank lines are ignored
+            First=one=two
+            Nested__Key = "  # = \"quoted\" \\ tail  "
+            Empty=
+            """;
+
+        SupprocomSecretDocument document = SupprocomSecretDocument.Parse(dotenv);
+
+        Assert.That(
+            document.Settings.Select(setting => setting.Key),
+            Is.EqualTo(new[] { "First", "Nested:Key", "Empty" }));
+        Assert.That(document.Settings[0].Value, Is.EqualTo("one=two"));
+        Assert.That(document.Settings[1].Value, Is.EqualTo("  # = \"quoted\" \\ tail  "));
+        Assert.That(document.Settings[2].Value, Is.EqualTo(string.Empty));
+
+        string serialized = document.Serialize();
+        Assert.That(serialized, Does.Contain("First=\"one=two\""));
+        Assert.That(
+            serialized,
+            Does.Contain($"Nested__Key={JsonSerializer.Serialize(document.Settings[1].Value)}"));
+
+        SupprocomSecretDocument reparsed = SupprocomSecretDocument.Parse(serialized);
+        Assert.That(
+            reparsed.Settings.Select(setting => (setting.Key, setting.Value)),
+            Is.EqualTo(new[]
+            {
+                ("Empty", string.Empty),
+                ("First", "one=two"),
+                ("Nested:Key", "  # = \"quoted\" \\ tail  ")
+            }));
+    }
+
+    [Test]
+    public void DetachedDocumentNormalizesColonPathsAndOrdersCanonicalOutput()
+    {
+        var settings = new[]
+        {
+            new SupprocomSecretSetting("z:Key", "z"),
+            new SupprocomSecretSetting("A:First", "a"),
+            new SupprocomSecretSetting("m:Middle", "m")
+        };
+
+        string serialized = SupprocomSecretDocument.Serialize(settings);
+        string[] lines = serialized
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.TrimEnd('\r'))
+            .ToArray();
+
+        Assert.That(lines, Is.EqualTo(new[]
+        {
+            "A__First=\"a\"",
+            "m__Middle=\"m\"",
+            "z__Key=\"z\""
+        }));
+
+        SupprocomSecretDocument reparsed = SupprocomSecretDocument.Parse(serialized);
+        Assert.That(
+            reparsed.Settings.Select(setting => setting.Key),
+            Is.EqualTo(new[] { "A:First", "m:Middle", "z:Key" }));
+    }
+
+    [Test]
+    public void DetachedDocumentRejectsCaseInsensitiveDuplicatesAndInvalidAssignments()
+    {
+        SupprocomSecretsException parsedDuplicate = Assert.Throws<SupprocomSecretsException>(
+            () => SupprocomSecretDocument.Parse("Auth__Key=one\nauth__key=two\n"))!;
+        Assert.That(parsedDuplicate.Code, Is.EqualTo("DuplicateDotenvKey"));
+
+        SupprocomSecretsException serializedDuplicate = Assert.Throws<SupprocomSecretsException>(
+            () => SupprocomSecretDocument.Serialize(new[]
+            {
+                new SupprocomSecretSetting("Auth:Key", "one"),
+                new SupprocomSecretSetting("auth:key", "two")
+            }))!;
+        Assert.That(serializedDuplicate.Code, Is.EqualTo("DuplicateDotenvKey"));
+
+        AssertDetachedParseCode("not-an-assignment", "InvalidDotenvAssignment");
+        AssertDetachedParseCode("Bad:Key=value", "InvalidDotenvKey");
+        AssertDetachedParseCode("Bad Key=value", "InvalidDotenvKey");
+        AssertDetachedParseCode("Key=\"unterminated", "InvalidQuotedValue");
+
+        SupprocomSecretsException serializedInvalid = Assert.Throws<SupprocomSecretsException>(
+            () => SupprocomSecretDocument.Serialize(new[]
+            {
+                new SupprocomSecretSetting("Bad Key", "value")
+            }))!;
+        Assert.That(serializedInvalid.Code, Is.EqualTo("InvalidDotenvKey"));
+    }
+
+    [Test]
+    public void DetachedDocumentRejectsReservedDirectivesWithoutLeakingValues()
+    {
+        SupprocomSecretsException source = Assert.Throws<SupprocomSecretsException>(
+            () => SupprocomSecretDocument.Parse(
+                "SUPPROCOM_SECRET_SOURCE=wincred://Supprocom/Test\n"))!;
+        Assert.That(source.Code, Is.EqualTo("DetachedStructuredEditingUnsupported"));
+
+        const string localSecret = "detached-local-secret";
+        SupprocomSecretsException local = Assert.Throws<SupprocomSecretsException>(
+            () => SupprocomSecretDocument.Parse(
+                $$"""
+                SUPPROCOM_LOCAL_OPTIONS={"Token":"{{localSecret}}"}
+                """))!;
+        Assert.That(local.Code, Is.EqualTo("DetachedStructuredEditingUnsupported"));
+        Assert.That(local.Message, Does.Not.Contain(localSecret));
+
+        SupprocomSecretsException serialized = Assert.Throws<SupprocomSecretsException>(
+            () => SupprocomSecretDocument.Serialize(new[]
+            {
+                new SupprocomSecretSetting("SUPPROCOM_SECRET_SOURCE", "wincred://Supprocom/Test")
+            }))!;
+        Assert.That(serialized.Code, Is.EqualTo("DetachedStructuredEditingUnsupported"));
+
+        SupprocomSecretsException serializedLocal = Assert.Throws<SupprocomSecretsException>(
+            () => SupprocomSecretDocument.Serialize(new[]
+            {
+                new SupprocomSecretSetting("SUPPROCOM_LOCAL_OPTIONS", localSecret)
+            }))!;
+        Assert.That(serializedLocal.Code, Is.EqualTo("DetachedStructuredEditingUnsupported"));
+        Assert.That(serializedLocal.Message, Does.Not.Contain(localSecret));
+    }
+
+    [Test]
+    public void DetachedDocumentHasNoFileProviderOrKeySideEffects()
+    {
+        using var directory = new TemporaryDirectory();
+        string[] before = Directory.GetFiles(directory.Path, "*", SearchOption.AllDirectories);
+
+        SupprocomSecretDocument document = SupprocomSecretDocument.Parse("Value=detached\n");
+        _ = SupprocomSecretDocument.Serialize(document.Settings);
+
+        string[] after = Directory.GetFiles(directory.Path, "*", SearchOption.AllDirectories);
+        Assert.That(after, Is.EqualTo(before));
+    }
+
+    private static void AssertDetachedParseCode(string dotenv, string expectedCode)
+    {
+        SupprocomSecretsException exception = Assert.Throws<SupprocomSecretsException>(
+            () => SupprocomSecretDocument.Parse(dotenv))!;
+        Assert.That(exception.Code, Is.EqualTo(expectedCode));
+    }
+
     private static async Task AssertProtectedWriteFailure(
         Func<SupprocomSecretFileStore, Task> mutation)
     {

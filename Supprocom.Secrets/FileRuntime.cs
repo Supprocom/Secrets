@@ -998,7 +998,7 @@ internal sealed class SecretFileRuntime
         }
     }
 
-    private static void ValidateDocumentSemantics(ParsedSecretDocument document)
+    internal static void ValidateDocumentSemantics(ParsedSecretDocument document)
     {
         if (document.SourceDirective is not null && document.Values.Count != 0)
         {

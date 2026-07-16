@@ -60,6 +60,28 @@ internal static class SecretDocumentSerializer
         return builder.ToString();
     }
 
+    public static string Serialize(IEnumerable<KeyValuePair<string, string>> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+
+        var normalized = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (KeyValuePair<string, string> item in values)
+        {
+            ArgumentNullException.ThrowIfNull(item.Key);
+            ArgumentNullException.ThrowIfNull(item.Value);
+
+            string key = SecretDocumentParser.NormalizeConfigurationKey(item.Key);
+            if (!normalized.TryAdd(key, item.Value))
+            {
+                throw new SupprocomSecretsException(
+                    "DuplicateDotenvKey",
+                    $"Duplicate configuration key '{item.Key}' in detached settings.");
+            }
+        }
+
+        return Serialize((IReadOnlyDictionary<string, string>)normalized);
+    }
+
     private static JsonObject BuildLocalObject(IReadOnlyDictionary<string, string> values)
     {
         var root = new JsonObject();
