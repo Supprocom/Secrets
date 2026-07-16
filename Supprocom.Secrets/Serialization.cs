@@ -71,6 +71,13 @@ internal static class SecretDocumentSerializer
             ArgumentNullException.ThrowIfNull(item.Value);
 
             string key = SecretDocumentParser.NormalizeConfigurationKey(item.Key);
+            if (SecretDocumentParser.IsReservedConfigurationKey(key))
+            {
+                throw new SupprocomSecretsException(
+                    "DetachedStructuredEditingUnsupported",
+                    "Structured settings cannot contain SUPPROCOM_SECRET_SOURCE or SUPPROCOM_LOCAL_OPTIONS.");
+            }
+
             if (!normalized.TryAdd(key, item.Value))
             {
                 throw new SupprocomSecretsException(

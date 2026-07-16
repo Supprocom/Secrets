@@ -59,7 +59,7 @@ public sealed class SupprocomSecretDocument
             ArgumentNullException.ThrowIfNull(setting.Value);
 
             string normalized = SecretDocumentParser.NormalizeConfigurationKey(setting.Key);
-            if (IsReserved(normalized))
+            if (SecretDocumentParser.IsReservedConfigurationKey(normalized))
             {
                 throw new SupprocomSecretsException(
                     "DetachedStructuredEditingUnsupported",
@@ -84,7 +84,4 @@ public sealed class SupprocomSecretDocument
         }
     }
 
-    private static bool IsReserved(string key) =>
-        key.Equals("SUPPROCOM_SECRET_SOURCE", StringComparison.OrdinalIgnoreCase) ||
-        key.Equals("SUPPROCOM_LOCAL_OPTIONS", StringComparison.OrdinalIgnoreCase);
 }

@@ -526,6 +526,10 @@ internal static class SecretDocumentParser
     internal static string NormalizeConfigurationKey(string key) =>
         key.Replace("__", ":", StringComparison.Ordinal);
 
+    internal static bool IsReservedConfigurationKey(string key) =>
+        key.Equals("SUPPROCOM_SECRET_SOURCE", StringComparison.OrdinalIgnoreCase) ||
+        key.Equals("SUPPROCOM_LOCAL_OPTIONS", StringComparison.OrdinalIgnoreCase);
+
     private static SupprocomSecretsException Error(string code, string message) =>
         new(code, message);
 

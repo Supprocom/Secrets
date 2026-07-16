@@ -15,6 +15,8 @@ public static class SupprocomSecretsFileProtectionServiceCollectionExtensions
         services.AddSingleton<SupprocomSecretFileStore>(_ => new SupprocomSecretFileStore(options));
         services.AddSingleton<ISecretDocumentStore>(provider =>
             provider.GetRequiredService<SupprocomSecretFileStore>());
+        services.AddSingleton<ISecretDocumentUpdater>(provider =>
+            provider.GetRequiredService<SupprocomSecretFileStore>());
         services.AddSingleton<ISecretFileProtectionManager>(provider =>
             provider.GetRequiredService<SupprocomSecretFileStore>());
         return services;

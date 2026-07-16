@@ -9,6 +9,7 @@ namespace Supprocom.Secrets;
 public sealed class SupprocomSecretFileStore :
     ISecretStore,
     ISecretDocumentStore,
+    ISecretDocumentUpdater,
     ISecretFileProtectionManager
 {
     private readonly SecretFileRuntime _runtime;
@@ -66,6 +67,11 @@ public sealed class SupprocomSecretFileStore :
 
     public Task ReplaceDocumentAsync(string document, CancellationToken cancellationToken = default) =>
         _runtime.ReplaceDocumentAsync(document, cancellationToken);
+
+    public Task UpdateDocumentAsync(
+        Func<IReadOnlyList<SupprocomSecretSetting>, IReadOnlyList<SupprocomSecretSetting>> update,
+        CancellationToken cancellationToken = default) =>
+        _runtime.UpdateDocumentAsync(update, cancellationToken);
 
     public Task<SecretFileProtectionState> GetStateAsync(
         CancellationToken cancellationToken = default) =>
@@ -424,6 +430,107 @@ internal sealed class SecretFileRuntime
         }
     }
 
+    public async Task UpdateDocumentAsync(
+        Func<IReadOnlyList<SupprocomSecretSetting>, IReadOnlyList<SupprocomSecretSetting>> update,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(update);
+        cancellationToken.ThrowIfCancellationRequested();
+        ValidateFileNames();
+        Directory.CreateDirectory(DirectoryPath);
+
+        string activePath = Path.Combine(DirectoryPath, _fileOptions.ActiveName);
+        SemaphoreSlim writerLock = GetWriterLock(activePath);
+        await writerLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        byte[] originalBytes = Array.Empty<byte>();
+        bool originalExists = false;
+        FilePermissionSnapshot? originalPermissions = null;
+        try
+        {
+            originalExists = File.Exists(activePath);
+            if (originalExists)
+            {
+                originalBytes = await ReadUpdateSnapshotAsync(
+                        activePath,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                originalPermissions = FilePermissionSnapshot.Capture(activePath);
+            }
+
+            try
+            {
+                PhysicalFile physical = await LoadPhysicalCoreAsync(
+                        _fileOptions.ActiveName,
+                        _fileOptions.TemplateName,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                ParsedSecretDocument document = physical.Document;
+
+                if (document.SourceDirective is not null)
+                {
+                    throw new SupprocomSecretsException(
+                        "ExternalProviderPointer",
+                        "The pointer file cannot be atomically updated through the built-in local store.");
+                }
+
+                if (document.HasLocalOptions)
+                {
+                    throw new SupprocomSecretsException(
+                        "LocalOptionsUpdateUnsupported",
+                        "Atomic structured updates cannot edit SUPPROCOM_LOCAL_OPTIONS documents.");
+                }
+
+                var snapshot = document.Values
+                    .Select(item => new SupprocomSecretSetting(item.Key, item.Value))
+                    .ToArray();
+                IReadOnlyList<SupprocomSecretSetting> transformed =
+                    update(Array.AsReadOnly(snapshot));
+                if (transformed is null)
+                {
+                    throw new SupprocomSecretsException(
+                        "DocumentUpdateResultMissing",
+                        "The atomic document update callback returned no settings.");
+                }
+
+                string serialized = SecretDocumentSerializer.Serialize(
+                    transformed.Select(setting =>
+                        new KeyValuePair<string, string>(setting.Key, setting.Value)));
+                ParsedSecretDocument validated = SecretDocumentParser.Parse(serialized, activePath);
+                ValidateDocumentSemantics(validated);
+                cancellationToken.ThrowIfCancellationRequested();
+                await WriteAtomicAsync(activePath, serialized, null, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                try
+                {
+                    await RestoreUpdateSnapshotAsync(
+                            activePath,
+                            originalExists,
+                            originalBytes,
+                            originalPermissions)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception rollbackException)
+                {
+                    throw new SupprocomSecretsException(
+                        "DocumentUpdateRollbackFailed",
+                        "Unable to restore the active file after an atomic document update failed.",
+                        new AggregateException(exception, rollbackException));
+                }
+
+                throw;
+            }
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(originalBytes);
+            writerLock.Release();
+        }
+    }
+
     private async Task<PhysicalFile> LoadPhysicalAsync(
         string name,
         string templateName,
@@ -624,7 +731,7 @@ internal sealed class SecretFileRuntime
                     $"Active file '{path}' is protected and requires installation-bound AES-GCM configuration.");
             }
 
-            byte[] key = await GetInstallationKeyAsync(cancellationToken).ConfigureAwait(false);
+            byte[] key = await GetExistingInstallationKeyAsync(cancellationToken).ConfigureAwait(false);
             try
             {
                 return SecretFileProtectionCodec.Decrypt(bytes, key, path);
@@ -834,6 +941,58 @@ internal sealed class SecretFileRuntime
         }
         catch (UnauthorizedAccessException)
         {
+        }
+    }
+
+    private static async Task<byte[]> ReadUpdateSnapshotAsync(
+        string activePath,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await File.ReadAllBytesAsync(activePath, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            throw new SupprocomSecretsException(
+                "DocumentUpdateReadFailed",
+                $"Unable to read active file '{activePath}' before an atomic document update.",
+                exception);
+        }
+    }
+
+    private static async Task RestoreUpdateSnapshotAsync(
+        string activePath,
+        bool originalExists,
+        byte[] originalBytes,
+        FilePermissionSnapshot? originalPermissions)
+    {
+        if (!originalExists)
+        {
+            if (File.Exists(activePath))
+                File.Delete(activePath);
+            return;
+        }
+
+        string temporary = await PreparePayloadFileAsync(
+                activePath,
+                originalBytes,
+                originalPermissions,
+                CancellationToken.None)
+            .ConfigureAwait(false);
+        try
+        {
+            File.Move(temporary, activePath, overwrite: true);
+            temporary = string.Empty;
+        }
+        finally
+        {
+            DeleteTemporaryFile(temporary);
         }
     }
 

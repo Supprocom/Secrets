@@ -9,7 +9,7 @@ namespace Supprocom.Secrets.Tests;
 [TestFixture]
 public sealed class PackageAcceptanceTests
 {
-    private const string PackageVersion = "0.1.3";
+    private const string PackageVersion = "0.1.4";
 
     [Test]
     [Explicit("Requires a freshly packed source-mapped Supprocom.Secrets package.")]
@@ -247,6 +247,30 @@ public sealed class PackageAcceptanceTests
         Assert.That(run.StandardOutput, Does.Contain("one=two|edited"));
     }
 
+    [Test]
+    [Explicit("Requires a freshly packed source-mapped Supprocom.Secrets package.")]
+    public void FreshPackageReferenceAtomicDocumentUpdateRunsWithoutProjectReferences()
+    {
+        string repository = FindRepositoryRoot();
+        string packagePath = GetPackagePath(repository);
+        Assert.That(File.Exists(packagePath), Is.True, "Pack the current commit before running package acceptance.");
+
+        using var root = new TemporaryDirectory();
+        string consumer = Path.Combine(root.Path, "atomic-update-consumer");
+        CreateAtomicUpdateConsumer(consumer, packagePath);
+        RestoreAndBuild(consumer);
+
+        ProcessResult run = RunProcess(
+            "dotnet",
+            "Consumer.dll",
+            Path.Combine(consumer, "bin", "Debug", "net10.0"),
+            expectedExitCode: 0,
+            environment: NuGetEnvironment(consumer));
+        Assert.That(
+            run.StandardOutput,
+            Does.Contain("keep|/canonical/module|false|Protected|/canonical/module|false"));
+    }
+
     private static void CreateProtectionConsumer(string directory, string packagePath)
     {
         Directory.CreateDirectory(directory);
@@ -320,6 +344,90 @@ public sealed class PackageAcceptanceTests
                 .Build();
             SecretFileProtectionState after = await manager.GetStateAsync();
             Console.WriteLine($"{before}|{unlocked}|{after}|{configuration["Api:Endpoint"]}");
+            """,
+            encoding: new UTF8Encoding(false));
+    }
+
+    private static void CreateAtomicUpdateConsumer(string directory, string packagePath)
+    {
+        Directory.CreateDirectory(directory);
+        Write(
+            Path.Combine(directory, "Consumer.csproj"),
+            $$"""
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <OutputType>Exe</OutputType>
+                <TargetFramework>net10.0</TargetFramework>
+                <ImplicitUsings>enable</ImplicitUsings>
+                <Nullable>enable</Nullable>
+              </PropertyGroup>
+              <ItemGroup>
+                <PackageReference Include="Supprocom.Secrets" Version="{{PackageVersion}}" />
+              </ItemGroup>
+            </Project>
+            """,
+            encoding: new UTF8Encoding(false));
+        Write(
+            Path.Combine(directory, "NuGet.config"),
+            $$"""
+            <configuration>
+              <packageSources>
+                <clear />
+                <add key="verification" value="{{Path.GetDirectoryName(packagePath)!}}" />
+                <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
+              </packageSources>
+            </configuration>
+            """,
+            encoding: new UTF8Encoding(false));
+        Write(
+            Path.Combine(directory, "Program.cs"),
+            """
+            using Supprocom.Secrets;
+
+            string environment = Path.Combine(AppContext.BaseDirectory, "Environment");
+            Directory.CreateDirectory(environment);
+            File.WriteAllText(
+                Path.Combine(environment, ".env"),
+                "Unrelated=keep\nExternalModules__0__Path=/existing/module\nExternalModules__0__Enabled=true\n");
+
+            var options = new SupprocomSecretFileOptions
+            {
+                Directory = environment,
+                Protection = SecretFileProtection.InstallationBoundAesGcm,
+                InstallationKeyPath = Path.Combine(environment, "installation.key")
+            };
+            ISecretDocumentUpdater updater = new SupprocomSecretFileStore(options);
+            await updater.UpdateDocumentAsync(snapshot =>
+            {
+                int index = 0;
+                while (snapshot.Any(setting =>
+                           setting.Key.Equals(
+                               $"ExternalModules:{index}:Path",
+                               StringComparison.OrdinalIgnoreCase)))
+                {
+                    index++;
+                }
+
+                return snapshot
+                    .Concat(new[]
+                    {
+                        new SupprocomSecretSetting(
+                            $"ExternalModules:{index}:Path",
+                            "/canonical/module"),
+                        new SupprocomSecretSetting(
+                            $"ExternalModules:{index}:Enabled",
+                            "false")
+                    })
+                    .ToArray();
+            });
+
+            var values = await new SupprocomSecretFileStore(options).LoadAsync();
+            var restarted = new SupprocomSecretFileStore(options);
+            var restartedValues = await restarted.LoadAsync();
+            Console.WriteLine(
+                $"{values["Unrelated"]}|{values["ExternalModules:1:Path"]}|{values["ExternalModules:1:Enabled"]}|" +
+                $"{await restarted.GetStateAsync()}|{restartedValues["ExternalModules:1:Path"]}|" +
+                $"{restartedValues["ExternalModules:1:Enabled"]}");
             """,
             encoding: new UTF8Encoding(false));
     }

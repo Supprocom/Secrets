@@ -352,6 +352,423 @@ public sealed class SupprocomSecretsTests
     }
 
     [Test]
+    public async Task AtomicDocumentUpdateUsesNormalizedSnapshotAndPreservesUnrelatedSettings()
+    {
+        using var directory = new TemporaryDirectory();
+        Write(
+            directory.Path,
+            ".env",
+            "Unrelated=keep\nExternalModules__0__Path=/existing/module\nExternalModules__0__Enabled=true\n");
+        var store = new SupprocomSecretFileStore(
+            new SupprocomSecretFileOptions { Directory = directory.Path });
+        int callbackCount = 0;
+
+        await store.UpdateDocumentAsync(snapshot =>
+        {
+            callbackCount++;
+            Assert.That(
+                snapshot.Select(setting => setting.Key),
+                Does.Contain("ExternalModules:0:Path"));
+            int index = 0;
+            while (snapshot.Any(setting =>
+                       setting.Key.Equals(
+                           $"ExternalModules:{index}:Path",
+                           StringComparison.OrdinalIgnoreCase)))
+            {
+                index++;
+            }
+
+            return snapshot
+                .Concat(new[]
+                {
+                    new SupprocomSecretSetting(
+                        $"ExternalModules:{index}:Path",
+                        "/canonical/module"),
+                    new SupprocomSecretSetting(
+                        $"ExternalModules:{index}:Enabled",
+                        "false")
+                })
+                .ToArray();
+        });
+
+        Assert.That(callbackCount, Is.EqualTo(1));
+        IReadOnlyDictionary<string, string> values = await store.LoadAsync();
+        Assert.That(values["Unrelated"], Is.EqualTo("keep"));
+        Assert.That(values["ExternalModules:0:Path"], Is.EqualTo("/existing/module"));
+        Assert.That(values["ExternalModules:1:Path"], Is.EqualTo("/canonical/module"));
+        Assert.That(values["ExternalModules:1:Enabled"], Is.EqualTo("false"));
+    }
+
+    [Test]
+    public async Task AtomicDocumentUpdateCreatesMissingActiveFromTemplate()
+    {
+        using var directory = new TemporaryDirectory();
+        Write(directory.Path, ".env.template", "Template__Value=from-template\n");
+        var store = new SupprocomSecretFileStore(
+            new SupprocomSecretFileOptions { Directory = directory.Path });
+
+        await store.UpdateDocumentAsync(snapshot =>
+        {
+            Assert.That(snapshot.Select(setting => setting.Key), Is.EqualTo(new[] { "Template:Value" }));
+            return snapshot
+                .Append(new SupprocomSecretSetting("Added", "after-template"))
+                .ToArray();
+        });
+
+        Assert.That(File.Exists(Path.Combine(directory.Path, ".env")), Is.True);
+        IReadOnlyDictionary<string, string> values = await store.LoadAsync();
+        Assert.That(values["Template:Value"], Is.EqualTo("from-template"));
+        Assert.That(values["Added"], Is.EqualTo("after-template"));
+    }
+
+    [Test]
+    public async Task AtomicDocumentUpdateCreatesMissingActiveWithoutTemplate()
+    {
+        using var directory = new TemporaryDirectory();
+        var store = new SupprocomSecretFileStore(
+            new SupprocomSecretFileOptions { Directory = directory.Path });
+        IReadOnlyList<SupprocomSecretSetting>? received = null;
+
+        await store.UpdateDocumentAsync(snapshot =>
+        {
+            received = snapshot;
+            return new[] { new SupprocomSecretSetting("Created", "yes") };
+        });
+
+        Assert.That(received, Is.Not.Null);
+        Assert.That(received!, Is.Empty);
+        Assert.That((await store.LoadAsync())["Created"], Is.EqualTo("yes"));
+    }
+
+    [Test]
+    public async Task AtomicDocumentUpdateProtectsAndSurvivesRestart()
+    {
+        using var directory = new TemporaryDirectory();
+        string keyPath = Path.Combine(directory.Path, "installation.key");
+        File.WriteAllBytes(keyPath, Enumerable.Range(1, 32).Select(value => (byte)value).ToArray());
+        Write(directory.Path, ".env", "Unrelated=keep\n");
+        var options = new SupprocomSecretFileOptions
+        {
+            Directory = directory.Path,
+            Protection = SecretFileProtection.InstallationBoundAesGcm,
+            InstallationKeyPath = keyPath
+        };
+        var store = new SupprocomSecretFileStore(options);
+
+        await store.UpdateDocumentAsync(snapshot => snapshot
+            .Concat(new[]
+            {
+                new SupprocomSecretSetting("ExternalModules:0:Path", "/canonical/module"),
+                new SupprocomSecretSetting("ExternalModules:0:Enabled", "false")
+            })
+            .ToArray());
+
+        Assert.That(await store.GetStateAsync(), Is.EqualTo(SecretFileProtectionState.Protected));
+        Assert.That((await store.LoadAsync())["ExternalModules:0:Enabled"], Is.EqualTo("false"));
+
+        var restarted = new SupprocomSecretFileStore(options);
+        Assert.That(await restarted.GetStateAsync(), Is.EqualTo(SecretFileProtectionState.Protected));
+        IReadOnlyDictionary<string, string> values = await restarted.LoadAsync();
+        Assert.That(values["Unrelated"], Is.EqualTo("keep"));
+        Assert.That(values["ExternalModules:0:Path"], Is.EqualTo("/canonical/module"));
+    }
+
+    [Test]
+    public async Task AtomicDocumentUpdateRejectsCallbackFailureCancellationAndInvalidOutput()
+    {
+        using var directory = new TemporaryDirectory();
+        string activePath = Path.Combine(directory.Path, ".env");
+        byte[] original = Encoding.UTF8.GetBytes("A=before\n");
+        File.WriteAllBytes(activePath, original);
+        var store = new SupprocomSecretFileStore(
+            new SupprocomSecretFileOptions { Directory = directory.Path });
+
+        int callbackCount = 0;
+        Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await store.UpdateDocumentAsync(_ =>
+            {
+                callbackCount++;
+                throw new InvalidOperationException("callback failure");
+            }));
+        Assert.That(callbackCount, Is.EqualTo(1));
+        Assert.That(File.ReadAllBytes(activePath), Is.EqualTo(original));
+
+        SupprocomSecretsException duplicate = Assert.ThrowsAsync<SupprocomSecretsException>(
+            async () => await store.UpdateDocumentAsync(_ => new[]
+            {
+                new SupprocomSecretSetting("A", "one"),
+                new SupprocomSecretSetting("a", "two")
+            }))!;
+        Assert.That(duplicate.Code, Is.EqualTo("DuplicateDotenvKey"));
+        Assert.That(File.ReadAllBytes(activePath), Is.EqualTo(original));
+
+        SupprocomSecretsException invalid = Assert.ThrowsAsync<SupprocomSecretsException>(
+            async () => await store.UpdateDocumentAsync(_ => new[]
+            {
+                new SupprocomSecretSetting("Invalid Key", "value")
+            }))!;
+        Assert.That(invalid.Code, Is.EqualTo("InvalidDotenvKey"));
+        Assert.That(File.ReadAllBytes(activePath), Is.EqualTo(original));
+
+        SupprocomSecretsException reserved = Assert.ThrowsAsync<SupprocomSecretsException>(
+            async () => await store.UpdateDocumentAsync(_ => new[]
+            {
+                new SupprocomSecretSetting("SUPPROCOM_SECRET_SOURCE", "fixture://provider")
+            }))!;
+        Assert.That(reserved.Code, Is.EqualTo("DetachedStructuredEditingUnsupported"));
+        Assert.That(File.ReadAllBytes(activePath), Is.EqualTo(original));
+
+        using var cancellation = new CancellationTokenSource();
+        int cancellationCallbacks = 0;
+        Assert.ThrowsAsync<OperationCanceledException>(
+            async () => await store.UpdateDocumentAsync(
+                snapshot =>
+                {
+                    cancellationCallbacks++;
+                    cancellation.Cancel();
+                    return snapshot;
+                },
+                cancellation.Token));
+        Assert.That(cancellationCallbacks, Is.EqualTo(1));
+        Assert.That(File.ReadAllBytes(activePath), Is.EqualTo(original));
+    }
+
+    [Test]
+    public async Task AtomicDocumentUpdateRejectsPointerAndLocalOptionsDocuments()
+    {
+        foreach (bool protectedInput in new[] { false, true })
+        {
+            int callbackCount = 0;
+            await AssertAtomicUpdateFailureStateAsync(
+                protectedInput,
+                "SUPPROCOM_SECRET_SOURCE=fixture://provider\n",
+                store => store.UpdateDocumentAsync(_ =>
+                {
+                    callbackCount++;
+                    return Array.Empty<SupprocomSecretSetting>();
+                }),
+                exception => Assert.That(
+                    exception,
+                    Has.Property(nameof(SupprocomSecretsException.Code))
+                        .EqualTo("ExternalProviderPointer")));
+            Assert.That(callbackCount, Is.EqualTo(0));
+
+            callbackCount = 0;
+            await AssertAtomicUpdateFailureStateAsync(
+                protectedInput,
+                "Ordinary=value\nSUPPROCOM_LOCAL_OPTIONS={\n  \"Tenant\": \"local\"\n}\n",
+                store => store.UpdateDocumentAsync(_ =>
+                {
+                    callbackCount++;
+                    return Array.Empty<SupprocomSecretSetting>();
+                }),
+                exception => Assert.That(
+                    exception,
+                    Has.Property(nameof(SupprocomSecretsException.Code))
+                        .EqualTo("LocalOptionsUpdateUnsupported")));
+            Assert.That(callbackCount, Is.EqualTo(0));
+        }
+    }
+
+    [Test]
+    public async Task AtomicDocumentUpdateFailuresRestoreExactBytesAndPermissions()
+    {
+        foreach (bool protectedInput in new[] { false, true })
+        {
+            int callbackCount = 0;
+            await AssertAtomicUpdateFailureStateAsync(
+                protectedInput,
+                "A=before\n",
+                store => store.UpdateDocumentAsync(_ =>
+                {
+                    callbackCount++;
+                    throw new InvalidOperationException("callback failure");
+                }),
+                exception => Assert.That(exception, Is.TypeOf<InvalidOperationException>()));
+            Assert.That(callbackCount, Is.EqualTo(1));
+
+            callbackCount = 0;
+            await AssertAtomicUpdateFailureStateAsync(
+                protectedInput,
+                "A=before\n",
+                store => store.UpdateDocumentAsync(_ =>
+                {
+                    callbackCount++;
+                    return null!;
+                }),
+                exception => Assert.That(
+                    exception,
+                    Has.Property(nameof(SupprocomSecretsException.Code))
+                        .EqualTo("DocumentUpdateResultMissing")));
+            Assert.That(callbackCount, Is.EqualTo(1));
+
+            callbackCount = 0;
+            await AssertAtomicUpdateFailureStateAsync(
+                protectedInput,
+                "A=before\n",
+                store => store.UpdateDocumentAsync(_ =>
+                {
+                    callbackCount++;
+                    return new[] { new SupprocomSecretSetting("Bad Key", "value") };
+                }),
+                exception => Assert.That(
+                    exception,
+                    Has.Property(nameof(SupprocomSecretsException.Code))
+                        .EqualTo("InvalidDotenvKey")));
+            Assert.That(callbackCount, Is.EqualTo(1));
+
+            callbackCount = 0;
+            await AssertAtomicUpdateFailureStateAsync(
+                protectedInput,
+                "A=before\n",
+                store => store.UpdateDocumentAsync(_ =>
+                {
+                    callbackCount++;
+                    return new[]
+                    {
+                        new SupprocomSecretSetting("A", "one"),
+                        new SupprocomSecretSetting("a", "two")
+                    };
+                }),
+                exception => Assert.That(
+                    exception,
+                    Has.Property(nameof(SupprocomSecretsException.Code))
+                        .EqualTo("DuplicateDotenvKey")));
+            Assert.That(callbackCount, Is.EqualTo(1));
+
+            using var cancellation = new CancellationTokenSource();
+            callbackCount = 0;
+            await AssertAtomicUpdateFailureStateAsync(
+                protectedInput,
+                "A=before\n",
+                store => store.UpdateDocumentAsync(
+                    snapshot =>
+                    {
+                        callbackCount++;
+                        cancellation.Cancel();
+                        return snapshot;
+                    },
+                    cancellation.Token),
+                exception => Assert.That(exception, Is.TypeOf<OperationCanceledException>()));
+            Assert.That(callbackCount, Is.EqualTo(1));
+        }
+
+        foreach (bool protectedInput in new[] { false, true })
+        {
+            await AssertAtomicUpdateWriteFailureStateAsync(protectedInput);
+        }
+    }
+
+    [Test]
+    public async Task AtomicDocumentUpdateCallbackFailureDoesNotCreateMissingActiveFile()
+    {
+        using var directory = new TemporaryDirectory();
+        var store = new SupprocomSecretFileStore(
+            new SupprocomSecretFileOptions { Directory = directory.Path });
+        int callbackCount = 0;
+        Exception? failure = null;
+
+        try
+        {
+            await store.UpdateDocumentAsync(_ =>
+            {
+                callbackCount++;
+                throw new InvalidOperationException("missing callback failure");
+            });
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        Assert.That(failure, Is.TypeOf<InvalidOperationException>());
+        Assert.That(callbackCount, Is.EqualTo(1));
+        Assert.That(File.Exists(Path.Combine(directory.Path, ".env")), Is.False);
+        Assert.That(Directory.GetFiles(directory.Path, ".supprocom-*.tmp"), Is.Empty);
+    }
+
+    [Test]
+    public async Task AtomicUpdateSerializesWithSet()
+    {
+        using var directory = new TemporaryDirectory();
+        Write(directory.Path, ".env", "A=one\n");
+        var store = new SupprocomSecretFileStore(
+            new SupprocomSecretFileOptions { Directory = directory.Path });
+
+        await RunBlockedUpdateAsync(
+            store,
+            snapshot => snapshot.Append(new SupprocomSecretSetting("FromUpdate", "one")).ToArray(),
+            () => store.SetAsync("FromSet", "two"));
+
+        IReadOnlyDictionary<string, string> values = await store.LoadAsync();
+        Assert.That(values["FromUpdate"], Is.EqualTo("one"));
+        Assert.That(values["FromSet"], Is.EqualTo("two"));
+    }
+
+    [Test]
+    public async Task AtomicUpdateSerializesWithDelete()
+    {
+        using var directory = new TemporaryDirectory();
+        Write(directory.Path, ".env", "DeleteMe=present\n");
+        var store = new SupprocomSecretFileStore(
+            new SupprocomSecretFileOptions { Directory = directory.Path });
+
+        await RunBlockedUpdateAsync(
+            store,
+            snapshot => snapshot.Append(new SupprocomSecretSetting("FromUpdate", "one")).ToArray(),
+            () => store.DeleteAsync("DeleteMe"));
+
+        IReadOnlyDictionary<string, string> values = await store.LoadAsync();
+        Assert.That(values.ContainsKey("DeleteMe"), Is.False);
+        Assert.That(values["FromUpdate"], Is.EqualTo("one"));
+    }
+
+    [Test]
+    public async Task AtomicUpdateSerializesWithReplace()
+    {
+        using var directory = new TemporaryDirectory();
+        Write(directory.Path, ".env", "A=one\n");
+        var store = new SupprocomSecretFileStore(
+            new SupprocomSecretFileOptions { Directory = directory.Path });
+
+        await RunBlockedUpdateAsync(
+            store,
+            snapshot => snapshot.Append(new SupprocomSecretSetting("FromUpdate", "one")).ToArray(),
+            () => store.ReplaceDocumentAsync("Replacement=after\n"));
+
+        IReadOnlyDictionary<string, string> values = await store.LoadAsync();
+        Assert.That(values["Replacement"], Is.EqualTo("after"));
+        Assert.That(values.ContainsKey("FromUpdate"), Is.False);
+    }
+
+    [Test]
+    public async Task AtomicUpdatesSerializeWithEachOtherAndSeeCommittedSettings()
+    {
+        using var directory = new TemporaryDirectory();
+        Write(directory.Path, ".env", "A=one\n");
+        var store = new SupprocomSecretFileStore(
+            new SupprocomSecretFileOptions { Directory = directory.Path });
+        var secondSawFirst = new TaskCompletionSource<object?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        Task first = RunBlockedUpdateAsync(
+            store,
+            snapshot => snapshot.Append(new SupprocomSecretSetting("First", "one")).ToArray(),
+            () => store.UpdateDocumentAsync(snapshot =>
+            {
+                if (snapshot.Any(setting => setting.Key.Equals("First", StringComparison.OrdinalIgnoreCase)))
+                    secondSawFirst.TrySetResult(null);
+                return snapshot.Append(new SupprocomSecretSetting("Second", "two")).ToArray();
+            }));
+        await first;
+        Assert.That(secondSawFirst.Task.IsCompleted, Is.True);
+
+        IReadOnlyDictionary<string, string> values = await store.LoadAsync();
+        Assert.That(values["First"], Is.EqualTo("one"));
+        Assert.That(values["Second"], Is.EqualTo("two"));
+    }
+
+    [Test]
     public async Task ProtectionManagerReportsUnprotectsAndAllowsNormalReprotection()
     {
         using var directory = new TemporaryDirectory();
@@ -385,6 +802,7 @@ public sealed class SupprocomSecretsTests
         ISecretFileProtectionManager manager = services.GetRequiredService<ISecretFileProtectionManager>();
         SupprocomSecretFileStore concrete = services.GetRequiredService<SupprocomSecretFileStore>();
         Assert.That(concrete, Is.SameAs(services.GetRequiredService<ISecretDocumentStore>()));
+        Assert.That(concrete, Is.SameAs(services.GetRequiredService<ISecretDocumentUpdater>()));
         Assert.That(concrete, Is.SameAs(manager));
         Assert.Throws<InvalidOperationException>(() => services.GetRequiredService<ISecretStore>());
 
@@ -1942,6 +2360,190 @@ public sealed class SupprocomSecretsTests
         Assert.That(exception.Code, Is.EqualTo(expectedCode));
     }
 
+    private static async Task AssertAtomicUpdateFailureStateAsync(
+        bool protectedInput,
+        string plaintext,
+        Func<SupprocomSecretFileStore, Task> operation,
+        Action<Exception> assertException)
+    {
+        using var directory = new TemporaryDirectory();
+        string activePath = Path.Combine(directory.Path, ".env");
+        string keyPath = Path.Combine(directory.Path, "installation.key");
+        byte[] key = Enumerable.Range(1, 32).Select(value => (byte)value).ToArray();
+        File.WriteAllBytes(keyPath, key);
+        byte[] original = protectedInput
+            ? SecretFileProtectionCodec.Encrypt(plaintext, key)
+            : Encoding.UTF8.GetBytes(plaintext);
+        File.WriteAllBytes(activePath, original);
+        ConfigureRestrictivePermissions(activePath);
+        PermissionEvidence beforePermissions = CapturePermissions(activePath);
+
+        var options = new SupprocomSecretFileOptions
+        {
+            Directory = directory.Path,
+            Protection = protectedInput
+                ? SecretFileProtection.InstallationBoundAesGcm
+                : SecretFileProtection.None,
+            InstallationKeyPath = keyPath
+        };
+
+        Exception? failure = null;
+        try
+        {
+            await operation(new SupprocomSecretFileStore(options));
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        Assert.That(failure, Is.Not.Null);
+        assertException(failure!);
+        Assert.That(File.ReadAllBytes(activePath), Is.EqualTo(original));
+        AssertPermissionsUnchanged(activePath, beforePermissions);
+        Assert.That(Directory.GetFiles(directory.Path, ".supprocom-*.tmp"), Is.Empty);
+    }
+
+    private static async Task AssertAtomicUpdateWriteFailureStateAsync(bool protectedInput)
+    {
+        using var directory = new TemporaryDirectory();
+        string activePath = Path.Combine(directory.Path, ".env");
+        byte[] key = Enumerable.Range(1, 32).Select(value => (byte)value).ToArray();
+        string plaintext = "A=before\n";
+        byte[] original = protectedInput
+            ? SecretFileProtectionCodec.Encrypt(plaintext, key)
+            : Encoding.UTF8.GetBytes(plaintext);
+        File.WriteAllBytes(activePath, original);
+        ConfigureRestrictivePermissions(activePath);
+        PermissionEvidence beforePermissions = CapturePermissions(activePath);
+        int callbackCount = 0;
+
+        Exception? failure = null;
+        try
+        {
+            await new SupprocomSecretFileStore(new SupprocomSecretFileOptions
+            {
+                Directory = directory.Path,
+                Protection = SecretFileProtection.InstallationBoundAesGcm,
+                InstallationKeyStore = new FailOnSecondKeyStore(
+                    key,
+                    failOnCall: protectedInput ? 1 : 2)
+            }).UpdateDocumentAsync(snapshot =>
+            {
+                callbackCount++;
+                return snapshot
+                    .Append(new SupprocomSecretSetting("After", "must-not-commit"))
+                    .ToArray();
+            });
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        Assert.That(
+            failure,
+            Has.Property(nameof(SupprocomSecretsException.Code))
+                .EqualTo("InstallationKeyUnavailable"));
+        Assert.That(callbackCount, Is.EqualTo(1));
+        Assert.That(File.ReadAllBytes(activePath), Is.EqualTo(original));
+        if (protectedInput)
+        {
+            Assert.That(
+                SecretFileProtectionCodec.Decrypt(original, key, activePath),
+                Does.Not.Contain("After"));
+        }
+        AssertPermissionsUnchanged(activePath, beforePermissions);
+        Assert.That(Directory.GetFiles(directory.Path, ".supprocom-*.tmp"), Is.Empty);
+    }
+
+    private static async Task RunBlockedUpdateAsync(
+        SupprocomSecretFileStore store,
+        Func<IReadOnlyList<SupprocomSecretSetting>, IReadOnlyList<SupprocomSecretSetting>> transform,
+        Func<Task> competing)
+    {
+        var entered = new TaskCompletionSource<object?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<object?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        Task first = Task.Run(() => store.UpdateDocumentAsync(snapshot =>
+        {
+            entered.TrySetResult(null);
+            release.Task.GetAwaiter().GetResult();
+            return transform(snapshot);
+        }));
+        Task? second = null;
+
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            second = competing();
+            Task completed = await Task.WhenAny(second, Task.Delay(100));
+            Assert.That(completed, Is.Not.SameAs(second));
+        }
+        finally
+        {
+            release.TrySetResult(null);
+        }
+
+        await first;
+        if (second is not null)
+            await second;
+    }
+
+#pragma warning disable CA1416
+    private static void ConfigureRestrictivePermissions(string path)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            using WindowsIdentity identity = WindowsIdentity.GetCurrent();
+            SecurityIdentifier currentUser = identity.User
+                ?? throw new InvalidOperationException("The test identity has no SID.");
+            var security = new FileSecurity();
+            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+            security.AddAccessRule(new FileSystemAccessRule(
+                currentUser,
+                FileSystemRights.FullControl,
+                AccessControlType.Allow));
+            new FileInfo(path).SetAccessControl(security);
+            return;
+        }
+
+        if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS() || OperatingSystem.IsFreeBSD())
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+    }
+
+    private static PermissionEvidence CapturePermissions(string path)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            FileSecurity security = new FileInfo(path).GetAccessControl(AccessControlSections.Access);
+            return new PermissionEvidence(
+                security.GetSecurityDescriptorSddlForm(AccessControlSections.Access),
+                security.AreAccessRulesProtected,
+                null);
+        }
+
+        if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS() || OperatingSystem.IsFreeBSD())
+            return new PermissionEvidence(null, null, File.GetUnixFileMode(path));
+
+        return new PermissionEvidence(null, null, null);
+    }
+
+    private static void AssertPermissionsUnchanged(string path, PermissionEvidence before)
+    {
+        PermissionEvidence after = CapturePermissions(path);
+        Assert.That(after.WindowsSddl, Is.EqualTo(before.WindowsSddl));
+        Assert.That(after.WindowsProtected, Is.EqualTo(before.WindowsProtected));
+        Assert.That(after.UnixMode, Is.EqualTo(before.UnixMode));
+    }
+#pragma warning restore CA1416
+
+    private sealed record PermissionEvidence(
+        string? WindowsSddl,
+        bool? WindowsProtected,
+        UnixFileMode? UnixMode);
+
     private static async Task AssertProtectedWriteFailure(
         Func<SupprocomSecretFileStore, Task> mutation)
     {
@@ -2010,6 +2612,38 @@ public sealed class SupprocomSecretsTests
                 "The test installation key is unavailable.");
     }
 
+    private sealed class FailOnSecondKeyStore : IInstallationKeyStore
+    {
+        private readonly byte[] _key;
+        private readonly int _failOnCall;
+        private int _calls;
+
+        public FailOnSecondKeyStore(byte[] key, int failOnCall)
+        {
+            _key = key.ToArray();
+            _failOnCall = failOnCall;
+        }
+
+        public Task<byte[]> GetOrCreateKeyAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (Interlocked.Increment(ref _calls) == _failOnCall)
+            {
+                throw new SupprocomSecretsException(
+                    "InstallationKeyUnavailable",
+                    "The test installation key became unavailable before commit.");
+            }
+
+            return Task.FromResult(_key.ToArray());
+        }
+
+        public Task<byte[]> ReadExistingKeyAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(_key.ToArray());
+        }
+    }
+
     private sealed class ThrowingKeyAccessStore : IInstallationKeyStore
     {
         public int GetOrCreateCalls { get; private set; }
@@ -2049,6 +2683,12 @@ public sealed class SupprocomSecretsTests
             }
 
             return _key.ToArray();
+        }
+
+        public Task<byte[]> ReadExistingKeyAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(_key.ToArray());
         }
     }
 
