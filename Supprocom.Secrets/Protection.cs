@@ -40,6 +40,28 @@ public sealed class FileInstallationKeyStore : IInstallationKeyStore
         }
     }
 
+    public async Task<byte[]> ReadExistingKeyAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        SemaphoreSlim keyLock = KeyLocks.GetOrAdd(_path, _ => new SemaphoreSlim(1, 1));
+        await keyLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!File.Exists(_path))
+            {
+                throw new SupprocomSecretsException(
+                    "InstallationKeyUnavailable",
+                    $"The existing installation key '{_path}' is unavailable.");
+            }
+
+            return await ReadKeyAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            keyLock.Release();
+        }
+    }
+
     private async Task<byte[]> GetOrCreateKeyCoreAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -379,6 +401,9 @@ internal static class SecretFileProtectionCodec
 
     public static bool IsEnvelope(ReadOnlySpan<byte> bytes) =>
         bytes.Length >= MinimumEnvelopeSize && bytes[0] == Version;
+
+    public static bool HasEnvelopeMarker(ReadOnlySpan<byte> bytes) =>
+        bytes.Length != 0 && bytes[0] == Version;
 
     public static byte[] Encrypt(string plaintext, ReadOnlySpan<byte> key)
     {

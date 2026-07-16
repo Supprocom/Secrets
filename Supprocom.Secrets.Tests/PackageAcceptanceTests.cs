@@ -9,7 +9,7 @@ namespace Supprocom.Secrets.Tests;
 [TestFixture]
 public sealed class PackageAcceptanceTests
 {
-    private const string PackageVersion = "0.1.1";
+    private const string PackageVersion = "0.1.2";
 
     [Test]
     [Explicit("Requires a freshly packed source-mapped Supprocom.Secrets package.")]
@@ -69,22 +69,27 @@ public sealed class PackageAcceptanceTests
         Assert.That(File.ReadAllText(Path.Combine(debugEnvironment, ".env.template")), Is.EqualTo("Smoke__Base=base\n"));
         Assert.That(File.ReadAllText(Path.Combine(debugEnvironment, ".dev.env.template")), Is.EqualTo("Smoke__Overlay=overlay\n"));
         Assert.That(File.Exists(Path.Combine(debugEnvironment, ".env")), Is.False);
+        Assert.That(File.Exists(Path.Combine(debugEnvironment, ".dev.env")), Is.False);
+        Assert.That(File.Exists(Path.Combine(debugEnvironment, ".env.development")), Is.False);
 
+        string publishDirectory = Path.Combine(root.Path, "overlay-publish");
         RunProcess(
             "dotnet",
-            "publish Consumer.csproj -c Release --no-restore --nologo",
+            $"publish Consumer.csproj -c Release --no-restore --nologo -p:UseAppHost=false -o \"{publishDirectory}\"",
             consumer,
             expectedExitCode: 0,
             environment: NuGetEnvironment(consumer));
-        string publishEnvironment = Path.Combine(consumer, "bin", "Release", "net10.0", "publish", "Environment");
+        string publishEnvironment = Path.Combine(publishDirectory, "Environment");
         Assert.That(File.Exists(Path.Combine(publishEnvironment, ".env.template")), Is.True);
         Assert.That(File.Exists(Path.Combine(publishEnvironment, ".dev.env.template")), Is.True);
         Assert.That(File.Exists(Path.Combine(publishEnvironment, ".env")), Is.False);
+        Assert.That(File.Exists(Path.Combine(publishEnvironment, ".dev.env")), Is.False);
+        Assert.That(File.Exists(Path.Combine(publishEnvironment, ".env.development")), Is.False);
 
         ProcessResult run = RunProcess(
             "dotnet",
             "Consumer.dll",
-            Path.Combine(consumer, "bin", "Release", "net10.0", "publish"),
+            publishDirectory,
             environment: new Dictionary<string, string> { ["DOTNET_ENVIRONMENT"] = "Development" });
         Assert.That(run.StandardOutput, Does.Contain("base|overlay"));
         Assert.That(File.Exists(Path.Combine(publishEnvironment, ".env")), Is.True);
@@ -96,7 +101,7 @@ public sealed class PackageAcceptanceTests
         File.SetLastWriteTimeUtc(baseTemplate, DateTime.UtcNow.AddSeconds(2));
         RunProcess(
             "dotnet",
-            "publish Consumer.csproj -c Release --no-restore --nologo",
+            $"publish Consumer.csproj -c Release --no-restore --nologo -p:UseAppHost=false -o \"{publishDirectory}\"",
             consumer,
             expectedExitCode: 0,
             environment: NuGetEnvironment(consumer));
@@ -107,13 +112,13 @@ public sealed class PackageAcceptanceTests
         CreateConsumer(replacement, packagePath);
         Write(Path.Combine(replacement, "Environment", ".env.development.template"), "Smoke__Mode=replacement\n");
         RestoreAndBuild(replacement);
+        string replacementPublish = Path.Combine(root.Path, "replacement-publish");
         RunProcess(
             "dotnet",
-            "publish Consumer.csproj -c Release --no-restore --nologo",
+            $"publish Consumer.csproj -c Release --no-restore --nologo -p:UseAppHost=false -o \"{replacementPublish}\"",
             replacement,
             expectedExitCode: 0,
             environment: NuGetEnvironment(replacement));
-        string replacementPublish = Path.Combine(replacement, "bin", "Release", "net10.0", "publish");
         ProcessResult replacementRun = RunProcess(
             "dotnet",
             "Consumer.dll",
@@ -141,6 +146,113 @@ public sealed class PackageAcceptanceTests
         Assert.That(failedBuild.ExitCode, Is.Not.EqualTo(0));
         Assert.That(failedBuild.CombinedOutput, Does.Contain(".dev.env.template"));
         Assert.That(failedBuild.CombinedOutput, Does.Contain(".env.development.template"));
+    }
+
+    [Test]
+    [Explicit("Requires a freshly packed source-mapped Supprocom.Secrets package.")]
+    public void FreshPackageReferenceProtectionManagementRunsWithoutProjectReferences()
+    {
+        string repository = FindRepositoryRoot();
+        string packagePath = GetPackagePath(repository);
+        Assert.That(File.Exists(packagePath), Is.True, "Pack the current commit before running package acceptance.");
+
+        using var root = new TemporaryDirectory();
+        string consumer = Path.Combine(root.Path, "protection-consumer");
+        CreateProtectionConsumer(consumer, packagePath);
+        RestoreAndBuild(consumer);
+
+        string output = Path.Combine(consumer, "bin", "Debug", "net10.0");
+        ProcessResult run = RunProcess(
+            "dotnet",
+            "Consumer.dll",
+            output,
+            expectedExitCode: 0,
+            environment: NuGetEnvironment(consumer));
+        Assert.That(
+            run.StandardOutput,
+            Does.Contain("Protected|Plaintext|Protected|https://sharpclaw.example.test"));
+
+        string environment = Path.Combine(output, "Environment");
+        Assert.That(File.ReadAllBytes(Path.Combine(environment, ".installation.key")), Has.Length.EqualTo(32));
+        Assert.That(File.ReadAllBytes(Path.Combine(environment, ".env"))[0], Is.EqualTo(1));
+        Assert.That(Directory.GetFiles(environment, ".pre-supprocom-import-*"), Has.Length.EqualTo(1));
+    }
+
+    private static void CreateProtectionConsumer(string directory, string packagePath)
+    {
+        Directory.CreateDirectory(directory);
+        Write(
+            Path.Combine(directory, "Consumer.csproj"),
+            $$"""
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <OutputType>Exe</OutputType>
+                <TargetFramework>net10.0</TargetFramework>
+                <ImplicitUsings>enable</ImplicitUsings>
+                <Nullable>enable</Nullable>
+              </PropertyGroup>
+              <ItemGroup>
+                <PackageReference Include="Supprocom.Secrets" Version="{{PackageVersion}}" />
+                <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.0" />
+                <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
+              </ItemGroup>
+            </Project>
+            """,
+            encoding: new UTF8Encoding(false));
+        Write(
+            Path.Combine(directory, "NuGet.config"),
+            $$"""
+            <configuration>
+              <packageSources>
+                <clear />
+                <add key="verification" value="{{Path.GetDirectoryName(packagePath)!}}" />
+                <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
+              </packageSources>
+            </configuration>
+            """,
+            encoding: new UTF8Encoding(false));
+        Write(
+            Path.Combine(directory, "Program.cs"),
+            """
+            using System.Text;
+            using Microsoft.Extensions.Configuration;
+            using Microsoft.Extensions.DependencyInjection;
+            using Supprocom.Secrets;
+
+            const string legacyKey = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=";
+            const string legacyEnvelope =
+                "ARAREhMUFRYXGBkaG8nhmjikVDzDIijr7hSv9gz/5XS5o1eQ+TG8Efv6IeAFiIpSyUUM6ZlS45n65Ww2" +
+                "J6zUx68lpN40HqYnSjTAlyGT1ldkAXEvbf/Y4oMROV5wUqM4Zqttke5hpCUqCJ2zND0sjyEC+avcj03g" +
+                "H8le/IRXYcCoQwVaXlqIaKCzCVeuKuajVYT9xZAXDbnZHr3Mh1IBa/pBddierwNxXMkl+0IJCBELrYSl" +
+                "OHPfJGav2WKyRlct8P3KPWa3C9RfBPMos59jfE+hRxCeSw==";
+
+            string environment = Path.Combine(AppContext.BaseDirectory, "Environment");
+            Directory.CreateDirectory(environment);
+            string keyPath = Path.Combine(environment, ".installation.key");
+            string activePath = Path.Combine(environment, ".env");
+            File.WriteAllText(keyPath, $" \t{legacyKey}\r\n", new UTF8Encoding(false));
+            File.WriteAllBytes(activePath, Convert.FromBase64String(legacyEnvelope));
+
+            var options = new SupprocomSecretsOptions();
+            options.File.Directory = environment;
+            options.File.Import = SecretFileImport.JsonWithCommentsOnce;
+            options.File.Protection = SecretFileProtection.InstallationBoundAesGcm;
+            options.File.InstallationKeyPath = keyPath;
+
+            using ServiceProvider services = new ServiceCollection()
+                .AddSupprocomSecretsFileProtectionManagement(options)
+                .BuildServiceProvider();
+            ISecretFileProtectionManager manager = services.GetRequiredService<ISecretFileProtectionManager>();
+            SecretFileProtectionState before = await manager.GetStateAsync();
+            await manager.UnprotectAsync();
+            SecretFileProtectionState unlocked = await manager.GetStateAsync();
+            IConfiguration configuration = new ConfigurationBuilder()
+                .AddSupprocomSecrets(options)
+                .Build();
+            SecretFileProtectionState after = await manager.GetStateAsync();
+            Console.WriteLine($"{before}|{unlocked}|{after}|{configuration["Api:Endpoint"]}");
+            """,
+            encoding: new UTF8Encoding(false));
     }
 
     private static void CreateConsumer(string directory, string packagePath)

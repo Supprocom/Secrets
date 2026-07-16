@@ -351,6 +351,264 @@ public sealed class SupprocomSecretsTests
         Assert.That(values["Tenant"], Is.EqualTo("after"));
     }
 
+    [Test]
+    public async Task ProtectionManagerReportsUnprotectsAndAllowsNormalReprotection()
+    {
+        using var directory = new TemporaryDirectory();
+        string keyPath = Path.Combine(directory.Path, "installation.key");
+        byte[] key = Enumerable.Range(1, 32).Select(value => (byte)value).ToArray();
+        File.WriteAllBytes(keyPath, key);
+        string activePath = Path.Combine(directory.Path, ".env");
+        byte[] protectedFixture = Convert.FromBase64String(LegacySharpClawFixtureEnvelopeBase64);
+        File.WriteAllBytes(activePath, protectedFixture);
+
+        var options = new SupprocomSecretFileOptions
+        {
+            Directory = directory.Path,
+            Import = SecretFileImport.JsonWithCommentsOnce,
+            Protection = SecretFileProtection.InstallationBoundAesGcm,
+            InstallationKeyPath = keyPath
+        };
+
+        using ServiceProvider services = new ServiceCollection()
+            .AddSupprocomSecretsFileProtectionManagement(new SupprocomSecretsOptions
+            {
+                File =
+                {
+                    Directory = directory.Path,
+                    Import = SecretFileImport.JsonWithCommentsOnce,
+                    Protection = SecretFileProtection.InstallationBoundAesGcm,
+                    InstallationKeyPath = keyPath
+                }
+            })
+            .BuildServiceProvider();
+        ISecretFileProtectionManager manager = services.GetRequiredService<ISecretFileProtectionManager>();
+
+        Assert.That(await manager.GetStateAsync(), Is.EqualTo(SecretFileProtectionState.Protected));
+        await manager.UnprotectAsync();
+        Assert.That(await manager.GetStateAsync(), Is.EqualTo(SecretFileProtectionState.Plaintext));
+        string plaintext = File.ReadAllText(activePath);
+        Assert.That(plaintext, Does.Contain("https://sharpclaw.example.test"));
+        Assert.That(plaintext, Does.Not.Contain("secret"));
+
+        IReadOnlyDictionary<string, string> values = await new SupprocomSecretFileStore(options).LoadAsync();
+        Assert.That(values["Api:Endpoint"], Is.EqualTo("https://sharpclaw.example.test"));
+        Assert.That(await new SupprocomSecretFileStore(options).GetStateAsync(), Is.EqualTo(SecretFileProtectionState.Protected));
+
+        IReadOnlyDictionary<string, string> restarted = await new SupprocomSecretFileStore(options).LoadAsync();
+        Assert.That(restarted["Install:CertificateAlias"], Is.EqualTo("legacy-windows"));
+    }
+
+    [Test]
+    public async Task ProtectionManagerRejectsExplicitInvalidStatesWithoutChangingActiveBytes()
+    {
+        using (var missing = new TemporaryDirectory())
+        {
+            var store = new SupprocomSecretFileStore(new SupprocomSecretFileOptions
+            {
+                Directory = missing.Path,
+                Protection = SecretFileProtection.InstallationBoundAesGcm
+            });
+            SupprocomSecretsException exception = Assert.ThrowsAsync<SupprocomSecretsException>(
+                async () => await store.UnprotectAsync())!;
+            Assert.That(exception.Code, Is.EqualTo("ProtectionFileMissing"));
+            Assert.That(await store.GetStateAsync(), Is.EqualTo(SecretFileProtectionState.Missing));
+        }
+
+        using (var plaintext = new TemporaryDirectory())
+        {
+            string path = Path.Combine(plaintext.Path, ".env");
+            byte[] original = Encoding.UTF8.GetBytes("A=plaintext\n");
+            File.WriteAllBytes(path, original);
+            var store = new SupprocomSecretFileStore(new SupprocomSecretFileOptions
+            {
+                Directory = plaintext.Path,
+                Protection = SecretFileProtection.InstallationBoundAesGcm,
+                InstallationKeyPath = Path.Combine(plaintext.Path, "key")
+            });
+            SupprocomSecretsException exception = Assert.ThrowsAsync<SupprocomSecretsException>(
+                async () => await store.UnprotectAsync())!;
+            Assert.That(exception.Code, Is.EqualTo("ProtectionFileAlreadyPlaintext"));
+            Assert.That(File.ReadAllBytes(path), Is.EqualTo(original));
+        }
+
+        using (var mismatch = new TemporaryDirectory())
+        {
+            string path = Path.Combine(mismatch.Path, ".env");
+            byte[] original = Encoding.UTF8.GetBytes("A=plaintext\n");
+            File.WriteAllBytes(path, original);
+            var store = new SupprocomSecretFileStore(new SupprocomSecretFileOptions
+            {
+                Directory = mismatch.Path,
+                Protection = SecretFileProtection.None
+            });
+            SupprocomSecretsException exception = Assert.ThrowsAsync<SupprocomSecretsException>(
+                async () => await store.UnprotectAsync())!;
+            Assert.That(exception.Code, Is.EqualTo("ProtectionConfigurationMismatch"));
+            Assert.That(File.ReadAllBytes(path), Is.EqualTo(original));
+        }
+
+        using (var malformed = new TemporaryDirectory())
+        {
+            string path = Path.Combine(malformed.Path, ".env");
+            byte[] original = new byte[] { 1, 2, 3 };
+            File.WriteAllBytes(path, original);
+            var store = new SupprocomSecretFileStore(new SupprocomSecretFileOptions
+            {
+                Directory = malformed.Path,
+                Protection = SecretFileProtection.InstallationBoundAesGcm,
+                InstallationKeyPath = Path.Combine(malformed.Path, "key")
+            });
+            SupprocomSecretsException exception = Assert.ThrowsAsync<SupprocomSecretsException>(
+                async () => await store.UnprotectAsync())!;
+            Assert.That(exception.Code, Is.EqualTo("InvalidProtectedDocument"));
+            exception = Assert.ThrowsAsync<SupprocomSecretsException>(
+                async () => await store.GetStateAsync())!;
+            Assert.That(exception.Code, Is.EqualTo("InvalidProtectedDocument"));
+            Assert.That(File.ReadAllBytes(path), Is.EqualTo(original));
+        }
+    }
+
+    [Test]
+    public async Task ProtectionManagerRejectsUnavailableOrInvalidKeysWithoutRegeneration()
+    {
+        foreach (bool invalid in new[] { false, true })
+        {
+            using var directory = new TemporaryDirectory();
+            string keyPath = Path.Combine(directory.Path, "installation.key");
+            if (invalid)
+                File.WriteAllBytes(keyPath, new byte[] { 1, 2, 3 });
+
+            string activePath = Path.Combine(directory.Path, ".env");
+            byte[] original = Convert.FromBase64String(LegacySharpClawFixtureEnvelopeBase64);
+            File.WriteAllBytes(activePath, original);
+            var store = new SupprocomSecretFileStore(new SupprocomSecretFileOptions
+            {
+                Directory = directory.Path,
+                Protection = SecretFileProtection.InstallationBoundAesGcm,
+                InstallationKeyPath = keyPath
+            });
+
+            SupprocomSecretsException exception = Assert.ThrowsAsync<SupprocomSecretsException>(
+                async () => await store.UnprotectAsync())!;
+            Assert.That(
+                exception.Code,
+                Is.EqualTo(invalid ? "InvalidInstallationKey" : "InstallationKeyUnavailable"));
+            Assert.That(File.ReadAllBytes(activePath), Is.EqualTo(original));
+            Assert.That(File.Exists(keyPath), Is.EqualTo(invalid));
+        }
+    }
+
+    [Test]
+    public async Task ProtectionManagerFailedWriteLeavesCiphertextAndTemporaryDirectoryClean()
+    {
+        using var directory = new TemporaryDirectory();
+        string keyPath = Path.Combine(directory.Path, "installation.key");
+        File.WriteAllBytes(keyPath, Enumerable.Range(1, 32).Select(value => (byte)value).ToArray());
+        string activePath = Path.Combine(directory.Path, ".env");
+        byte[] original = Convert.FromBase64String(LegacySharpClawFixtureEnvelopeBase64);
+        File.WriteAllBytes(activePath, original);
+        var options = new SupprocomSecretFileOptions
+        {
+            Directory = directory.Path,
+            Protection = SecretFileProtection.InstallationBoundAesGcm,
+            InstallationKeyPath = keyPath
+        };
+        SecretFileRuntime.UnprotectBeforeInstallHook = static _ =>
+            Task.FromException(new IOException("injected protection-management write failure"));
+        try
+        {
+            SupprocomSecretsException exception = Assert.ThrowsAsync<SupprocomSecretsException>(
+                async () => await new SupprocomSecretFileStore(options).UnprotectAsync())!;
+            Assert.That(exception.Code, Is.EqualTo("ProtectionUnprotectWriteFailed"));
+            Assert.That(exception.Message, Does.Not.Contain("injected"));
+        }
+        finally
+        {
+            SecretFileRuntime.UnprotectBeforeInstallHook = null;
+        }
+
+        Assert.That(File.ReadAllBytes(activePath), Is.EqualTo(original));
+        Assert.That(Directory.GetFiles(directory.Path, ".supprocom-*.tmp"), Is.Empty);
+    }
+
+    [Test]
+    public async Task ProtectionManagerCancellationAfterPreparationLeavesCiphertextAndTemporaryDirectoryClean()
+    {
+        using var directory = new TemporaryDirectory();
+        string keyPath = Path.Combine(directory.Path, "installation.key");
+        File.WriteAllBytes(keyPath, Enumerable.Range(1, 32).Select(value => (byte)value).ToArray());
+        string activePath = Path.Combine(directory.Path, ".env");
+        byte[] original = Convert.FromBase64String(LegacySharpClawFixtureEnvelopeBase64);
+        File.WriteAllBytes(activePath, original);
+        var options = new SupprocomSecretFileOptions
+        {
+            Directory = directory.Path,
+            Protection = SecretFileProtection.InstallationBoundAesGcm,
+            InstallationKeyPath = keyPath
+        };
+        using var cancellation = new CancellationTokenSource();
+        SecretFileRuntime.UnprotectBeforeInstallHook = _ =>
+        {
+            cancellation.Cancel();
+            return Task.CompletedTask;
+        };
+        try
+        {
+            Assert.ThrowsAsync<OperationCanceledException>(
+                async () => await new SupprocomSecretFileStore(options).UnprotectAsync(cancellation.Token));
+        }
+        finally
+        {
+            SecretFileRuntime.UnprotectBeforeInstallHook = null;
+        }
+
+        Assert.That(File.ReadAllBytes(activePath), Is.EqualTo(original));
+        Assert.That(Directory.GetFiles(directory.Path, ".supprocom-*.tmp"), Is.Empty);
+    }
+
+    [Test]
+    public async Task ProtectionManagerSerializesAgainstConcurrentDocumentReplacement()
+    {
+        using var directory = new TemporaryDirectory();
+        string keyPath = Path.Combine(directory.Path, "installation.key");
+        File.WriteAllBytes(keyPath, Enumerable.Range(1, 32).Select(value => (byte)value).ToArray());
+        string activePath = Path.Combine(directory.Path, ".env");
+        File.WriteAllBytes(activePath, Convert.FromBase64String(LegacySharpClawFixtureEnvelopeBase64));
+        var options = new SupprocomSecretFileOptions
+        {
+            Directory = directory.Path,
+            Protection = SecretFileProtection.InstallationBoundAesGcm,
+            InstallationKeyPath = keyPath
+        };
+        var entered = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        SecretFileRuntime.UnprotectBeforeInstallHook = async token =>
+        {
+            entered.TrySetResult(null);
+            await release.Task.WaitAsync(token);
+        };
+        try
+        {
+            var store = new SupprocomSecretFileStore(options);
+            Task unprotect = store.UnprotectAsync();
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Task replace = store.ReplaceDocumentAsync("Replacement=yes\n");
+            await Task.Delay(50);
+            Assert.That(replace.IsCompleted, Is.False);
+            release.TrySetResult(null);
+            await Task.WhenAll(unprotect, replace);
+        }
+        finally
+        {
+            SecretFileRuntime.UnprotectBeforeInstallHook = null;
+        }
+
+        IReadOnlyDictionary<string, string> values = await new SupprocomSecretFileStore(options).LoadAsync();
+        Assert.That(values["Replacement"], Is.EqualTo("yes"));
+        Assert.That(await new SupprocomSecretFileStore(options).GetStateAsync(), Is.EqualTo(SecretFileProtectionState.Protected));
+    }
+
     [TestCase(false)]
     [TestCase(true)]
     public async Task FailedImportPreservationLeavesActiveBytesAndNoPartialSibling(bool cancel)
@@ -1289,6 +1547,12 @@ public sealed class SupprocomSecretsTests
 
     private const string LegacySharpClawFixtureKeyBase64 =
         "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=";
+
+    private const string LegacySharpClawFixtureEnvelopeBase64 =
+        "ARAREhMUFRYXGBkaG8nhmjikVDzDIijr7hSv9gz/5XS5o1eQ+TG8Efv6IeAFiIpSyUUM6ZlS45n65Ww2" +
+        "J6zUx68lpN40HqYnSjTAlyGT1ldkAXEvbf/Y4oMROV5wUqM4Zqttke5hpCUqCJ2zND0sjyEC+avcj03g" +
+        "H8le/IRXYcCoQwVaXlqIaKCzCVeuKuajVYT9xZAXDbnZHr3Mh1IBa/pBddierwNxXMkl+0IJCBELrYSl" +
+        "OHPfJGav2WKyRlct8P3KPWa3C9RfBPMos59jfE+hRxCeSw==";
 
     private static IReadOnlyDictionary<string, string> CanonicalImportProjection(byte[] source)
     {

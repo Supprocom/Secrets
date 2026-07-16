@@ -6,7 +6,10 @@ using System.Text.Json.Nodes;
 
 namespace Supprocom.Secrets;
 
-public sealed class SupprocomSecretFileStore : ISecretStore, ISecretDocumentStore
+public sealed class SupprocomSecretFileStore :
+    ISecretStore,
+    ISecretDocumentStore,
+    ISecretFileProtectionManager
 {
     private readonly SecretFileRuntime _runtime;
 
@@ -64,6 +67,13 @@ public sealed class SupprocomSecretFileStore : ISecretStore, ISecretDocumentStor
     public Task ReplaceDocumentAsync(string document, CancellationToken cancellationToken = default) =>
         _runtime.ReplaceDocumentAsync(document, cancellationToken);
 
+    public Task<SecretFileProtectionState> GetStateAsync(
+        CancellationToken cancellationToken = default) =>
+        _runtime.GetStateAsync(cancellationToken);
+
+    public Task UnprotectAsync(CancellationToken cancellationToken = default) =>
+        _runtime.UnprotectAsync(cancellationToken);
+
     private static void CopyFileOptions(
         SupprocomSecretFileOptions source,
         SupprocomSecretFileOptions target)
@@ -89,6 +99,8 @@ internal sealed class SecretFileRuntime
         new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
     internal static Func<CancellationToken, Task>? ImportPreservationBeforeInstallHook { get; set; }
+
+    internal static Func<CancellationToken, Task>? UnprotectBeforeInstallHook { get; set; }
 
     private readonly SupprocomSecretsOptions _options;
     private readonly SupprocomSecretFileOptions _fileOptions;
@@ -211,6 +223,127 @@ internal sealed class SecretFileRuntime
         try
         {
             await WriteAtomicAsync(activePath, document, null, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            writerLock.Release();
+        }
+    }
+
+    public async Task<SecretFileProtectionState> GetStateAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ValidateFileNames();
+        string activePath = Path.Combine(DirectoryPath, _fileOptions.ActiveName);
+        SemaphoreSlim writerLock = GetWriterLock(activePath);
+        await writerLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!File.Exists(activePath))
+                return SecretFileProtectionState.Missing;
+
+            byte[] bytes;
+            try
+            {
+                bytes = await File.ReadAllBytesAsync(activePath, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+            {
+                throw new SupprocomSecretsException(
+                    "ProtectionFileReadFailed",
+                    $"Unable to read the protection state of active file '{activePath}'.",
+                    exception);
+            }
+
+            try
+            {
+                return ClassifyProtectionState(bytes, activePath);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(bytes);
+            }
+        }
+        finally
+        {
+            writerLock.Release();
+        }
+    }
+
+    public async Task UnprotectAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ValidateFileNames();
+        if (_fileOptions.Protection != SecretFileProtection.InstallationBoundAesGcm)
+        {
+            throw new SupprocomSecretsException(
+                "ProtectionConfigurationMismatch",
+                "Unprotect requires installation-bound AES-GCM protection to be configured.");
+        }
+
+        string activePath = Path.Combine(DirectoryPath, _fileOptions.ActiveName);
+        SemaphoreSlim writerLock = GetWriterLock(activePath);
+        await writerLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!File.Exists(activePath))
+            {
+                throw new SupprocomSecretsException(
+                    "ProtectionFileMissing",
+                    $"Cannot unprotect active file '{activePath}' because it does not exist.");
+            }
+
+            byte[] envelope;
+            try
+            {
+                envelope = await File.ReadAllBytesAsync(activePath, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+            {
+                throw new SupprocomSecretsException(
+                    "ProtectionFileReadFailed",
+                    $"Unable to read active file '{activePath}' for unprotect.",
+                    exception);
+            }
+
+            try
+            {
+                SecretFileProtectionState state = ClassifyProtectionState(envelope, activePath);
+                if (state == SecretFileProtectionState.Plaintext)
+                {
+                    throw new SupprocomSecretsException(
+                        "ProtectionFileAlreadyPlaintext",
+                        $"Active file '{activePath}' is already plaintext.");
+                }
+
+                byte[] key = await GetExistingInstallationKeyAsync(cancellationToken).ConfigureAwait(false);
+                string plaintext;
+                try
+                {
+                    plaintext = SecretFileProtectionCodec.Decrypt(envelope, key, activePath);
+                }
+                finally
+                {
+                    CryptographicOperations.ZeroMemory(key);
+                }
+
+                await WritePlaintextAtomicAsync(activePath, plaintext, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(envelope);
+            }
         }
         finally
         {
@@ -512,6 +645,68 @@ internal sealed class SecretFileRuntime
                 "InvalidDocumentEncoding",
                 $"Active file '{path}' is not valid UTF-8.",
                 exception);
+        }
+    }
+
+    private static SecretFileProtectionState ClassifyProtectionState(byte[] bytes, string path)
+    {
+        if (SecretFileProtectionCodec.IsEnvelope(bytes))
+            return SecretFileProtectionState.Protected;
+
+        if (SecretFileProtectionCodec.HasEnvelopeMarker(bytes))
+        {
+            throw new SupprocomSecretsException(
+                "InvalidProtectedDocument",
+                $"Active file '{path}' contains an incomplete protection envelope.");
+        }
+
+        return SecretFileProtectionState.Plaintext;
+    }
+
+    private async Task WritePlaintextAtomicAsync(
+        string path,
+        string plaintext,
+        CancellationToken cancellationToken)
+    {
+        byte[] payload = Encoding.UTF8.GetBytes(plaintext);
+        string? temporary = null;
+        try
+        {
+            FilePermissionSnapshot? permissions = FilePermissionSnapshot.Capture(path);
+            temporary = await PreparePayloadFileAsync(
+                    path,
+                    payload,
+                    permissions,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (UnprotectBeforeInstallHook is { } hook)
+                await hook(cancellationToken).ConfigureAwait(false);
+
+            cancellationToken.ThrowIfCancellationRequested();
+            File.Move(temporary, path, overwrite: true);
+            temporary = null;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (SupprocomSecretsException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            throw new SupprocomSecretsException(
+                "ProtectionUnprotectWriteFailed",
+                $"Unable to install the plaintext active file '{path}'.",
+                exception);
+        }
+        finally
+        {
+            DeleteTemporaryFile(temporary);
+            CryptographicOperations.ZeroMemory(payload);
         }
     }
 
@@ -930,6 +1125,22 @@ internal sealed class SecretFileRuntime
         if (!string.Equals(_cachedKeyPath, path, StringComparison.Ordinal))
             _cachedKeyPath = path;
         return await new FileInstallationKeyStore(path).GetOrCreateKeyAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<byte[]> GetExistingInstallationKeyAsync(CancellationToken cancellationToken)
+    {
+        string path = _fileOptions.InstallationKeyPath ?? Path.Combine(DirectoryPath, ".installation.key");
+        if (!string.Equals(_cachedKeyPath, path, StringComparison.Ordinal))
+            _cachedKeyPath = path;
+
+        if (_fileOptions.InstallationKeyStore is not null)
+        {
+            return await _fileOptions.InstallationKeyStore.ReadExistingKeyAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return await new FileInstallationKeyStore(path).ReadExistingKeyAsync(cancellationToken)
             .ConfigureAwait(false);
     }
 

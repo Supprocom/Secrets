@@ -25,6 +25,22 @@ public interface ISecretDocumentStore
         CancellationToken cancellationToken = default);
 }
 
+public enum SecretFileProtectionState
+{
+    Missing,
+    Plaintext,
+    Protected
+}
+
+public interface ISecretFileProtectionManager
+{
+    Task<SecretFileProtectionState> GetStateAsync(
+        CancellationToken cancellationToken = default);
+
+    Task UnprotectAsync(
+        CancellationToken cancellationToken = default);
+}
+
 public interface ISecretStoreProvider
 {
     string Scheme { get; }
@@ -37,4 +53,9 @@ public interface ISecretStoreProvider
 public interface IInstallationKeyStore
 {
     Task<byte[]> GetOrCreateKeyAsync(CancellationToken cancellationToken = default);
+
+    Task<byte[]> ReadExistingKeyAsync(CancellationToken cancellationToken = default) =>
+        throw new SupprocomSecretsException(
+            "InstallationKeyUnavailable",
+            "The configured installation key store cannot read an existing key without creating one.");
 }
