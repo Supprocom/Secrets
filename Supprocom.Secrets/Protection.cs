@@ -200,7 +200,7 @@ public sealed class FileInstallationKeyStore : IInstallationKeyStore
                     throw new InvalidOperationException("The current Windows identity has no security identifier.");
 
                 var file = new FileInfo(path);
-                FileSecurity security = file.GetAccessControl();
+                var security = new FileSecurity();
                 security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
                 security.SetAccessRule(new FileSystemAccessRule(
                     user,

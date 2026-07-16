@@ -85,8 +85,10 @@ public sealed class SupprocomSecretFileStore : ISecretStore, ISecretDocumentStor
 
 internal sealed class SecretFileRuntime
 {
-    private static readonly ConcurrentDictionary<string, SemaphoreSlim> MutationLocks =
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> WriterLocks =
         new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+
+    internal static Func<CancellationToken, Task>? ImportPreservationBeforeInstallHook { get; set; }
 
     private readonly SupprocomSecretsOptions _options;
     private readonly SupprocomSecretFileOptions _fileOptions;
@@ -204,7 +206,16 @@ internal sealed class SecretFileRuntime
         string activePath = Path.Combine(DirectoryPath, _fileOptions.ActiveName);
         ParsedSecretDocument parsed = SecretDocumentParser.Parse(document, activePath);
         ValidateDocumentSemantics(parsed);
-        await WriteAtomicAsync(activePath, document, null, cancellationToken).ConfigureAwait(false);
+        SemaphoreSlim writerLock = GetWriterLock(activePath);
+        await writerLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await WriteAtomicAsync(activePath, document, null, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            writerLock.Release();
+        }
     }
 
     public async Task MutateAsync(
@@ -218,11 +229,11 @@ internal sealed class SecretFileRuntime
         string normalizedKey = NormalizeMutationKey(key);
         Directory.CreateDirectory(DirectoryPath);
         string activePath = Path.Combine(DirectoryPath, _fileOptions.ActiveName);
-        SemaphoreSlim mutationLock = MutationLocks.GetOrAdd(Path.GetFullPath(activePath), _ => new SemaphoreSlim(1, 1));
-        await mutationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        SemaphoreSlim writerLock = GetWriterLock(activePath);
+        await writerLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            PhysicalFile physical = await LoadPhysicalAsync(
+            PhysicalFile physical = await LoadPhysicalCoreAsync(
                     _fileOptions.ActiveName,
                     _fileOptions.TemplateName,
                     cancellationToken)
@@ -276,11 +287,29 @@ internal sealed class SecretFileRuntime
         }
         finally
         {
-            mutationLock.Release();
+            writerLock.Release();
         }
     }
 
     private async Task<PhysicalFile> LoadPhysicalAsync(
+        string name,
+        string templateName,
+        CancellationToken cancellationToken)
+    {
+        string activePath = Path.Combine(DirectoryPath, name);
+        SemaphoreSlim writerLock = GetWriterLock(activePath);
+        await writerLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await LoadPhysicalCoreAsync(name, templateName, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            writerLock.Release();
+        }
+    }
+
+    private async Task<PhysicalFile> LoadPhysicalCoreAsync(
         string name,
         string templateName,
         CancellationToken cancellationToken)
@@ -619,15 +648,55 @@ internal sealed class SecretFileRuntime
         CancellationToken cancellationToken)
     {
         string sibling = CreateUniqueSibling(activePath, ".pre-supprocom-import-");
-        await using FileStream stream = new(
-            sibling,
-            FileMode.CreateNew,
-            FileAccess.Write,
-            FileShare.None,
-            bufferSize: 81920,
-            options: FileOptions.Asynchronous | FileOptions.WriteThrough);
-        await stream.WriteAsync(originalBytes, cancellationToken).ConfigureAwait(false);
-        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+        string temporary = CreateUniqueSibling(activePath, ".pre-supprocom-import-tmp-");
+        FilePermissionSnapshot? permissions = FilePermissionSnapshot.Capture(activePath);
+        try
+        {
+            await using (FileStream stream = new(
+                             temporary,
+                             FileMode.CreateNew,
+                             FileAccess.Write,
+                             FileShare.None,
+                             bufferSize: 81920,
+                             options: FileOptions.Asynchronous | FileOptions.WriteThrough))
+            {
+                permissions?.Apply(temporary);
+                await stream.WriteAsync(originalBytes, cancellationToken).ConfigureAwait(false);
+                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                if (stream.Length != originalBytes.Length)
+                {
+                    throw new SupprocomSecretsException(
+                        "ImportPreservationFailed",
+                        "The preserved import source did not contain the complete original document.");
+                }
+            }
+
+            if (ImportPreservationBeforeInstallHook is { } hook)
+                await hook(cancellationToken).ConfigureAwait(false);
+
+            File.Move(temporary, sibling);
+            temporary = string.Empty;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (SupprocomSecretsException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            throw new SupprocomSecretsException(
+                "ImportPreservationFailed",
+                "Unable to preserve the exact original import document.",
+                exception);
+        }
+        finally
+        {
+            DeleteTemporaryFile(temporary);
+        }
     }
 
     private ParsedSecretDocument ValidateTemplate(byte[] bytes, string templatePath)
@@ -848,6 +917,9 @@ internal sealed class SecretFileRuntime
             throw new SupprocomSecretsException("InvalidMutationKey", "Secret mutation key cannot be empty.");
         return normalized;
     }
+
+    private static SemaphoreSlim GetWriterLock(string activePath) =>
+        WriterLocks.GetOrAdd(Path.GetFullPath(activePath), _ => new SemaphoreSlim(1, 1));
 
     private async Task<byte[]> GetInstallationKeyAsync(CancellationToken cancellationToken)
     {
