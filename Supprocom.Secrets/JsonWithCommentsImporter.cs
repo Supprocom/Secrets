@@ -59,7 +59,8 @@ internal static class JsonWithCommentsImporter
                 foreach (KeyValuePair<string, string> item in SecretDocumentParser.FlattenJsonElement(
                              property.Value,
                              path,
-                             "SUPPROCOM_LOCAL_OPTIONS"))
+                             "SUPPROCOM_LOCAL_OPTIONS",
+                             result.LocalOptionNullValues))
                 {
                     result.LocalOptions.Add(item.Key, item.Value);
                 }
@@ -87,7 +88,11 @@ internal static class JsonWithCommentsImporter
                 AllowTrailingCommas = true,
                 CommentHandling = JsonCommentHandling.Skip
             });
-        values = SecretDocumentParser.FlattenJsonElement(wrapper.RootElement, path, "JSON import");
+        values = SecretDocumentParser.FlattenJsonElement(
+            wrapper.RootElement,
+            path,
+            "JSON import",
+            result.NullValues);
         foreach (KeyValuePair<string, string> item in values)
         {
             if (!result.Values.TryAdd(item.Key, item.Value))

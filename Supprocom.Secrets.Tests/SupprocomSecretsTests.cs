@@ -263,6 +263,8 @@ public sealed class SupprocomSecretsTests
                 "Missing": null,
               },
               "Items": ["one", false, 2.50,],
+              "EmptyObject": {},
+              "EmptyArray": [],
               "SUPPROCOM_LOCAL_OPTIONS": {
                 "CertificateAlias": "local",
               },
@@ -276,12 +278,24 @@ public sealed class SupprocomSecretsTests
             Import = SecretFileImport.JsonWithCommentsOnce
         };
         var store = new SupprocomSecretFileStore(options);
-        IReadOnlyDictionary<string, string> values = await store.LoadAsync();
 
-        IReadOnlyDictionary<string, string> expected = MicrosoftJsonProjection(original);
-        Assert.That(values.Keys, Is.EquivalentTo(expected.Keys));
-        foreach (KeyValuePair<string, string> item in expected)
-            Assert.That(values[item.Key], Is.EqualTo(item.Value), item.Key);
+        IConfiguration actual = new ConfigurationBuilder()
+            .AddSupprocomSecrets(configurationOptions =>
+            {
+                configurationOptions.File.Directory = directory.Path;
+                configurationOptions.File.Import = SecretFileImport.JsonWithCommentsOnce;
+                configurationOptions.FileOverridesProcessEnvironment = true;
+            })
+            .Build();
+        IReadOnlyDictionary<string, string?> expected = MicrosoftJsonConfigurationProjection(original);
+        HashSet<string> actualKeys = actual.AsEnumerable()
+            .Where(item => item.Value is not null || expected.ContainsKey(item.Key))
+            .Select(item => item.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Assert.That(actualKeys, Is.EquivalentTo(expected.Keys));
+        foreach (KeyValuePair<string, string?> item in expected)
+            Assert.That(actual[item.Key], Is.EqualTo(item.Value), item.Key);
+        Assert.That(actual["SUPPROCOM_LOCAL_OPTIONS:CertificateAlias"], Is.Null);
 
         string[] preserved = Directory.GetFiles(directory.Path, ".pre-supprocom-import-*");
         Assert.That(preserved, Has.Length.EqualTo(1));
@@ -1029,7 +1043,7 @@ public sealed class SupprocomSecretsTests
         Assert.That(provider.Opened, Is.True);
     }
 
-    private static IReadOnlyDictionary<string, string> MicrosoftJsonProjection(byte[] source)
+    private static IReadOnlyDictionary<string, string?> MicrosoftJsonConfigurationProjection(byte[] source)
     {
         string text = Encoding.UTF8.GetString(source);
         using var ordinaryStream = new MemoryStream(source, writable: false);
@@ -1045,7 +1059,7 @@ public sealed class SupprocomSecretsTests
                     CommentHandling = JsonCommentHandling.Skip
                 })
             ?? throw new InvalidOperationException("The JSON projection fixture did not produce a root node.");
-        var expected = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var expected = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         if (root is JsonObject rootObject)
         {
             foreach (KeyValuePair<string, JsonNode?> property in rootObject)
@@ -1077,19 +1091,26 @@ public sealed class SupprocomSecretsTests
     }
 
     private static void AddMicrosoftProjection(
-        IDictionary<string, string> expected,
+        IDictionary<string, string?> expected,
         IConfiguration configuration,
         JsonNode? node,
         string path)
     {
         if (node is null)
         {
-            expected[path] = configuration[path] ?? string.Empty;
+            expected[path] = configuration[path];
             return;
         }
 
         if (node is JsonObject objectNode)
         {
+            if (objectNode.Count == 0)
+            {
+                if (path.Length != 0)
+                    expected[path] = configuration[path];
+                return;
+            }
+
             foreach (KeyValuePair<string, JsonNode?> property in objectNode)
             {
                 string childPath = path.Length == 0 ? property.Key : $"{path}:{property.Key}";
@@ -1101,16 +1122,19 @@ public sealed class SupprocomSecretsTests
 
         if (node is JsonArray arrayNode)
         {
+            if (arrayNode.Count == 0)
+            {
+                expected[path] = configuration[path];
+                return;
+            }
+
             for (int index = 0; index < arrayNode.Count; index++)
                 AddMicrosoftProjection(expected, configuration, arrayNode[index], $"{path}:{index}");
 
             return;
         }
 
-        string value = configuration[path] ?? string.Empty;
-        if (node is JsonValue jsonValue && jsonValue.TryGetValue<bool>(out bool boolean))
-            value = boolean ? "true" : "false";
-        expected[path] = value;
+        expected[path] = configuration[path];
     }
 
     private static void AssertLocalJsonTypes(string directory, string? expectedNestedValue)

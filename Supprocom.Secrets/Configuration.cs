@@ -140,6 +140,9 @@ internal sealed class SupprocomSecretsConfigurationProvider : ConfigurationProvi
                 data[item.Key] = item.Value;
         }
 
+        foreach (string key in local.NullValues)
+            data[key] = null;
+
         if (!_options.FileOverridesProcessEnvironment)
             AddProcessEnvironment(data);
 
