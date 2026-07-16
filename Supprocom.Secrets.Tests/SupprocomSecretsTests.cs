@@ -825,7 +825,137 @@ public sealed class SupprocomSecretsTests
         Assert.That(exception.Code, Is.EqualTo("InvalidInstallationKey"));
     }
 
+    [Test]
+    public async Task ExistingBase64InstallationKeyMigratesToCanonicalRawBytes()
+    {
+        using var directory = new TemporaryDirectory();
+        string path = Path.Combine(directory.Path, "installation.key");
+        byte[] expectedKey = Enumerable.Range(1, 32).Select(value => (byte)value).ToArray();
+        string legacy = Convert.ToBase64String(expectedKey);
+        File.WriteAllText(path, $" \t{legacy} \r\n", new UTF8Encoding(false));
+
+        byte[] actual = await new FileInstallationKeyStore(path).GetOrCreateKeyAsync();
+
+        Assert.That(actual, Is.EqualTo(expectedKey));
+        Assert.That(File.ReadAllBytes(path), Is.EqualTo(expectedKey));
+        Assert.That(Directory.GetFiles(directory.Path, ".supprocom-key-*.tmp"), Is.Empty);
+        Assert.That(await new FileInstallationKeyStore(path).GetOrCreateKeyAsync(), Is.EqualTo(expectedKey));
+    }
+
+    [Test]
+    public void MalformedBase64InstallationKeyRemainsUntouchedAndFailsPrecisely()
+    {
+        using var directory = new TemporaryDirectory();
+        string path = Path.Combine(directory.Path, "installation.key");
+        byte[] original = Encoding.UTF8.GetBytes("not-base64\n");
+        File.WriteAllBytes(path, original);
+
+        SupprocomSecretsException exception = Assert.ThrowsAsync<SupprocomSecretsException>(
+            async () => await new FileInstallationKeyStore(path).GetOrCreateKeyAsync())!;
+
+        Assert.That(exception.Code, Is.EqualTo("InvalidInstallationKey"));
+        Assert.That(exception.Message, Does.Not.Contain("not-base64"));
+        Assert.That(File.ReadAllBytes(path), Is.EqualTo(original));
+        Assert.That(Directory.GetFiles(directory.Path, ".supprocom-key-*.tmp"), Is.Empty);
+    }
+
+    [Test]
+    public void WrongLengthOrAmbiguousBase64InstallationKeyRemainsUntouched()
+    {
+        using var directory = new TemporaryDirectory();
+        string path = Path.Combine(directory.Path, "installation.key");
+        string valid = Convert.ToBase64String(Enumerable.Range(1, 32).Select(value => (byte)value).ToArray());
+        string ambiguous = valid.Insert(8, " ");
+        byte[] original = Encoding.UTF8.GetBytes(ambiguous);
+        File.WriteAllBytes(path, original);
+
+        SupprocomSecretsException exception = Assert.ThrowsAsync<SupprocomSecretsException>(
+            async () => await new FileInstallationKeyStore(path).GetOrCreateKeyAsync())!;
+
+        Assert.That(exception.Code, Is.EqualTo("InvalidInstallationKey"));
+        Assert.That(File.ReadAllBytes(path), Is.EqualTo(original));
+
+        string wrongLengthPath = Path.Combine(directory.Path, "wrong-length.key");
+        byte[] wrongLength = new byte[31];
+        string wrongLengthText = Convert.ToBase64String(wrongLength);
+        File.WriteAllText(wrongLengthPath, wrongLengthText, new UTF8Encoding(false));
+
+        exception = Assert.ThrowsAsync<SupprocomSecretsException>(
+            async () => await new FileInstallationKeyStore(wrongLengthPath).GetOrCreateKeyAsync())!;
+
+        Assert.That(exception.Code, Is.EqualTo("InvalidInstallationKey"));
+        Assert.That(File.ReadAllText(wrongLengthPath), Is.EqualTo(wrongLengthText));
+    }
+
+    [Test]
+    public async Task FailedLegacyKeyMigrationLeavesTheLegacyFileAndCleansItsTemporaryFile()
+    {
+        using var directory = new TemporaryDirectory();
+        string path = Path.Combine(directory.Path, "installation.key");
+        byte[] expectedKey = Enumerable.Range(1, 32).Select(value => (byte)value).ToArray();
+        File.WriteAllText(path, Convert.ToBase64String(expectedKey), new UTF8Encoding(false));
+        byte[] original = File.ReadAllBytes(path);
+        Func<CancellationToken, Task>? previous = FileInstallationKeyStore.LegacyKeyMigrationBeforeInstallHook;
+
+        try
+        {
+            FileInstallationKeyStore.LegacyKeyMigrationBeforeInstallHook =
+                static _ => Task.FromException(new OperationCanceledException("test cancellation"));
+
+            Assert.ThrowsAsync<OperationCanceledException>(
+                async () => await new FileInstallationKeyStore(path).GetOrCreateKeyAsync());
+        }
+        finally
+        {
+            FileInstallationKeyStore.LegacyKeyMigrationBeforeInstallHook = previous;
+        }
+
+        Assert.That(File.ReadAllBytes(path), Is.EqualTo(original));
+        Assert.That(Directory.GetFiles(directory.Path, ".supprocom-key-*.tmp"), Is.Empty);
+        Assert.That(await new FileInstallationKeyStore(path).GetOrCreateKeyAsync(), Is.EqualTo(expectedKey));
+        Assert.That(File.ReadAllBytes(path), Is.EqualTo(expectedKey));
+    }
+
+    [Test]
+    public async Task ConcurrentLegacyKeyReadersConvergeOnOneCanonicalRawKey()
+    {
+        using var directory = new TemporaryDirectory();
+        string path = Path.Combine(directory.Path, "installation.key");
+        byte[] expectedKey = Enumerable.Range(1, 32).Select(value => (byte)value).ToArray();
+        File.WriteAllText(path, $"{Convert.ToBase64String(expectedKey)}\n", new UTF8Encoding(false));
+
+        Task<byte[]>[] reads = Enumerable.Range(0, 8)
+            .Select(_ => new FileInstallationKeyStore(path).GetOrCreateKeyAsync())
+            .ToArray();
+        byte[][] keys = await Task.WhenAll(reads);
+
+        Assert.That(keys.All(key => key.SequenceEqual(expectedKey)), Is.True);
+        Assert.That(File.ReadAllBytes(path), Is.EqualTo(expectedKey));
+        Assert.That(Directory.GetFiles(directory.Path, ".supprocom-key-*.tmp"), Is.Empty);
+    }
+
     #pragma warning disable CA1416
+    [Test]
+    public async Task LegacyKeyMigrationReappliesRestrictiveUnixPermissions()
+    {
+        if (OperatingSystem.IsWindows() ||
+            (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS() && !OperatingSystem.IsFreeBSD()))
+            Assert.Ignore("The installation-key mode contract is Unix-specific.");
+
+        using var directory = new TemporaryDirectory();
+        string path = Path.Combine(directory.Path, "installation.key");
+        byte[] expectedKey = Enumerable.Range(1, 32).Select(value => (byte)value).ToArray();
+        File.WriteAllText(path, Convert.ToBase64String(expectedKey), new UTF8Encoding(false));
+        File.SetUnixFileMode(
+            path,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite |
+            UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+
+        _ = await new FileInstallationKeyStore(path).GetOrCreateKeyAsync();
+
+        Assert.That(File.GetUnixFileMode(path), Is.EqualTo(UnixFileMode.UserRead | UnixFileMode.UserWrite));
+    }
+
     [Test]
     public async Task ExistingWindowsKeyDaclRemovesExplicitForeignReadAccess()
     {
@@ -854,6 +984,45 @@ public sealed class SupprocomSecretsTests
         new FileInfo(path).SetAccessControl(initial);
 
         Assert.That(await new FileInstallationKeyStore(path).GetOrCreateKeyAsync(), Is.EqualTo(expectedKey));
+
+        FileSecurity after = new FileInfo(path).GetAccessControl(AccessControlSections.Access);
+        var rules = after
+            .GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier))
+            .Cast<FileSystemAccessRule>();
+        Assert.That(
+            rules.Any(rule => rule.IdentityReference is SecurityIdentifier sid && sid.Equals(everyone)),
+            Is.False);
+    }
+
+    [Test]
+    public async Task LegacyWindowsKeyMigrationRemovesExplicitForeignReadAccess()
+    {
+        if (!OperatingSystem.IsWindows())
+            Assert.Ignore("The installation-key DACL contract is Windows-specific.");
+
+        using var directory = new TemporaryDirectory();
+        string path = Path.Combine(directory.Path, "installation.key");
+        byte[] expectedKey = Enumerable.Range(1, 32).Select(value => (byte)value).ToArray();
+        File.WriteAllText(path, Convert.ToBase64String(expectedKey), new UTF8Encoding(false));
+
+        using WindowsIdentity identity = WindowsIdentity.GetCurrent();
+        SecurityIdentifier currentUser = identity.User
+            ?? throw new InvalidOperationException("The test identity has no SID.");
+        var everyone = new SecurityIdentifier(WellKnownSidType.WorldSid, null);
+        var initial = new FileSecurity();
+        initial.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        initial.AddAccessRule(new FileSystemAccessRule(
+            currentUser,
+            FileSystemRights.FullControl,
+            AccessControlType.Allow));
+        initial.AddAccessRule(new FileSystemAccessRule(
+            everyone,
+            FileSystemRights.Read,
+            AccessControlType.Allow));
+        new FileInfo(path).SetAccessControl(initial);
+
+        Assert.That(await new FileInstallationKeyStore(path).GetOrCreateKeyAsync(), Is.EqualTo(expectedKey));
+        Assert.That(File.ReadAllBytes(path), Is.EqualTo(expectedKey));
 
         FileSecurity after = new FileInfo(path).GetAccessControl(AccessControlSections.Access);
         var rules = after
@@ -1049,6 +1218,54 @@ public sealed class SupprocomSecretsTests
     }
 
     [Test]
+    public async Task LegacyBase64KeyAndSharpClawEnvelopeFixtureImportToProtectedDotenv()
+    {
+        using var directory = new TemporaryDirectory();
+        string keyPath = Path.Combine(directory.Path, "sharpclaw.key");
+        byte[] expectedKey = Enumerable.Range(1, 32).Select(value => (byte)value).ToArray();
+        File.WriteAllText(
+            keyPath,
+            $"\t{LegacySharpClawFixtureKeyBase64}\r\n",
+            new UTF8Encoding(false));
+
+        byte[] original = Convert.FromBase64String(
+            "ARAREhMUFRYXGBkaG8nhmjikVDzDIijr7hSv9gz/5XS5o1eQ+TG8Efv6IeAFiIpSyUUM6ZlS45n65Ww2" +
+            "J6zUx68lpN40HqYnSjTAlyGT1ldkAXEvbf/Y4oMROV5wUqM4Zqttke5hpCUqCJ2zND0sjyEC+avcj03g" +
+            "H8le/IRXYcCoQwVaXlqIaKCzCVeuKuajVYT9xZAXDbnZHr3Mh1IBa/pBddierwNxXMkl+0IJCBELrYSl" +
+            "OHPfJGav2WKyRlct8P3KPWa3C9RfBPMos59jfE+hRxCeSw==");
+        string activePath = Path.Combine(directory.Path, ".env");
+        File.WriteAllBytes(activePath, original);
+
+        var options = new SupprocomSecretFileOptions
+        {
+            Directory = directory.Path,
+            Import = SecretFileImport.JsonWithCommentsOnce,
+            Protection = SecretFileProtection.InstallationBoundAesGcm,
+            InstallationKeyPath = keyPath
+        };
+
+        IReadOnlyDictionary<string, string> values =
+            await new SupprocomSecretFileStore(options).LoadAsync();
+
+        Assert.That(values["Api:Endpoint"], Is.EqualTo("https://sharpclaw.example.test"));
+        Assert.That(values["Install:CertificateAlias"], Is.EqualTo("legacy-windows"));
+        Assert.That(File.ReadAllBytes(keyPath), Is.EqualTo(expectedKey));
+
+        byte[] protectedDotenv = File.ReadAllBytes(activePath);
+        Assert.That(protectedDotenv[0], Is.EqualTo(1));
+        string canonicalDotenv = SecretFileProtectionCodec.Decrypt(protectedDotenv, expectedKey, activePath);
+        Assert.That(canonicalDotenv, Does.Contain("Api__Endpoint=\"https://sharpclaw.example.test\""));
+        Assert.That(canonicalDotenv, Does.Contain("Install__CertificateAlias=\"legacy-windows\""));
+        Assert.That(Directory.GetFiles(directory.Path, ".pre-supprocom-import-*"), Has.Length.EqualTo(1));
+        Assert.That(File.ReadAllBytes(Directory.GetFiles(directory.Path, ".pre-supprocom-import-*").Single()), Is.EqualTo(original));
+
+        IReadOnlyDictionary<string, string> restarted =
+            await new SupprocomSecretFileStore(options).LoadAsync();
+        Assert.That(restarted["Api:Endpoint"], Is.EqualTo("https://sharpclaw.example.test"));
+        Assert.That(restarted["Install:CertificateAlias"], Is.EqualTo("legacy-windows"));
+    }
+
+    [Test]
     public async Task ManualProviderRegistrationKeepsConsumerCodeUnchanged()
     {
         using var directory = new TemporaryDirectory();
@@ -1069,6 +1286,9 @@ public sealed class SupprocomSecretsTests
         Assert.That(configuration["Installation"], Is.EqualTo("local"));
         Assert.That(provider.Opened, Is.True);
     }
+
+    private const string LegacySharpClawFixtureKeyBase64 =
+        "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=";
 
     private static IReadOnlyDictionary<string, string> CanonicalImportProjection(byte[] source)
     {

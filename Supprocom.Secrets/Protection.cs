@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Security.AccessControl;
 using System.Security.Principal;
@@ -9,7 +10,12 @@ public sealed class FileInstallationKeyStore : IInstallationKeyStore
 {
     private const int KeySize = 32;
     private const int MaxConcurrentAttempts = 6;
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> KeyLocks =
+        new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
     private readonly string _path;
+
+    internal static Func<CancellationToken, Task>? LegacyKeyMigrationBeforeInstallHook { get; set; }
 
     public FileInstallationKeyStore(string path)
     {
@@ -20,6 +26,21 @@ public sealed class FileInstallationKeyStore : IInstallationKeyStore
     }
 
     public async Task<byte[]> GetOrCreateKeyAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        SemaphoreSlim keyLock = KeyLocks.GetOrAdd(_path, _ => new SemaphoreSlim(1, 1));
+        await keyLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await GetOrCreateKeyCoreAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            keyLock.Release();
+        }
+    }
+
+    private async Task<byte[]> GetOrCreateKeyCoreAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         string? directory = Path.GetDirectoryName(_path);
@@ -40,17 +61,7 @@ public sealed class FileInstallationKeyStore : IInstallationKeyStore
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (File.Exists(_path))
-            {
-                try
-                {
-                    return await ReadKeyAsync(cancellationToken).ConfigureAwait(false);
-                }
-                catch (SupprocomSecretsException exception) when (
-                    exception.Code == "InvalidInstallationKey" && attempt + 1 < MaxConcurrentAttempts)
-                {
-                    await RetryConcurrentReadAsync(attempt, cancellationToken).ConfigureAwait(false);
-                }
-            }
+                return await ReadKeyAsync(cancellationToken).ConfigureAwait(false);
 
             byte[] key = RandomNumberGenerator.GetBytes(KeySize);
             string temporary = Path.Combine(
@@ -156,16 +167,138 @@ public sealed class FileInstallationKeyStore : IInstallationKeyStore
                 exception);
         }
 
-        if (key.Length != 32)
+        if (key.Length == KeySize)
+            return key;
+
+        byte[] decodedKey;
+        try
+        {
+            decodedKey = DecodeLegacyKey(key);
+        }
+        finally
         {
             CryptographicOperations.ZeroMemory(key);
-            throw new SupprocomSecretsException(
-                "InvalidInstallationKey",
-                $"Installation key file '{_path}' must contain a 32-byte key.");
         }
 
-        return key;
+        try
+        {
+            await MigrateLegacyKeyAsync(decodedKey, cancellationToken).ConfigureAwait(false);
+            return decodedKey;
+        }
+        catch
+        {
+            CryptographicOperations.ZeroMemory(decodedKey);
+            throw;
+        }
     }
+
+    private byte[] DecodeLegacyKey(byte[] content)
+    {
+        string text;
+        try
+        {
+            text = StrictUtf8.GetString(content);
+        }
+        catch (DecoderFallbackException exception)
+        {
+            throw InvalidLegacyKey("The installation key file is not valid UTF-8 Base64 text.", exception);
+        }
+
+        string trimmed = text.Trim();
+        if (trimmed.Length == 0 || trimmed.Any(char.IsWhiteSpace) || trimmed.Any(character => character > 0x7F))
+        {
+            throw InvalidLegacyKey(
+                "The installation key file must contain only one ASCII Base64 value with optional surrounding whitespace.");
+        }
+
+        byte[] decoded;
+        try
+        {
+            decoded = Convert.FromBase64String(trimmed);
+        }
+        catch (FormatException exception)
+        {
+            throw InvalidLegacyKey("The installation key file contains malformed Base64 text.", exception);
+        }
+
+        if (decoded.Length != KeySize ||
+            !string.Equals(Convert.ToBase64String(decoded), trimmed, StringComparison.Ordinal))
+        {
+            CryptographicOperations.ZeroMemory(decoded);
+            throw InvalidLegacyKey("The installation key Base64 value must decode to exactly 32 bytes.");
+        }
+
+        return decoded;
+    }
+
+    private async Task MigrateLegacyKeyAsync(byte[] key, CancellationToken cancellationToken)
+    {
+        string directory = Path.GetDirectoryName(_path) ?? Path.GetTempPath();
+        string temporary = Path.Combine(directory, $".supprocom-key-{Guid.NewGuid():N}.tmp");
+        bool installed = false;
+        try
+        {
+            await using (FileStream stream = new(
+                             temporary,
+                             FileMode.CreateNew,
+                             FileAccess.Write,
+                             FileShare.None,
+                             bufferSize: 4096,
+                             options: FileOptions.Asynchronous | FileOptions.WriteThrough))
+            {
+                RestrictKeyPermissions(temporary);
+                await stream.WriteAsync(key, cancellationToken).ConfigureAwait(false);
+                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            if (new FileInfo(temporary).Length != KeySize)
+            {
+                throw new SupprocomSecretsException(
+                    "InstallationKeyMigrationFailed",
+                    "The canonical installation key replacement did not contain 32 bytes after flushing.");
+            }
+
+            Func<CancellationToken, Task>? hook = LegacyKeyMigrationBeforeInstallHook;
+            if (hook is not null)
+                await hook(cancellationToken).ConfigureAwait(false);
+
+            cancellationToken.ThrowIfCancellationRequested();
+            File.Move(temporary, _path, overwrite: true);
+            installed = true;
+            RestrictKeyPermissions(_path);
+        }
+        catch (SupprocomSecretsException)
+        {
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            throw new SupprocomSecretsException(
+                "InstallationKeyMigrationFailed",
+                $"Unable to replace the legacy installation key file '{_path}' with its canonical raw form.",
+                exception);
+        }
+        finally
+        {
+            if (!installed)
+                DeleteTemporary(temporary);
+        }
+    }
+
+    private SupprocomSecretsException InvalidLegacyKey(string reason, Exception? inner = null) =>
+        inner is null
+            ? new SupprocomSecretsException(
+                "InvalidInstallationKey",
+                $"Installation key file '{_path}' is invalid. {reason}")
+            : new SupprocomSecretsException(
+                "InvalidInstallationKey",
+                $"Installation key file '{_path}' is invalid. {reason}",
+                inner);
 
     private static async Task RetryConcurrentReadAsync(
         int attempt,
