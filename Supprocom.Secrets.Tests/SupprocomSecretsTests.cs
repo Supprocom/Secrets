@@ -1290,6 +1290,9 @@ public sealed class SupprocomSecretsTests
             FileSystemRights.FullControl,
             AccessControlType.Allow));
         new FileInfo(activePath).SetAccessControl(initial);
+        FileSecurity before = new FileInfo(activePath).GetAccessControl(AccessControlSections.Access);
+        string beforeSddl = before.GetSecurityDescriptorSddlForm(AccessControlSections.Access);
+        bool beforeProtected = before.AreAccessRulesProtected;
 
         await new SupprocomSecretFileStore(new SupprocomSecretFileOptions
         {
@@ -1299,6 +1302,10 @@ public sealed class SupprocomSecretsTests
         }).UnprotectAsync();
 
         FileSecurity after = new FileInfo(activePath).GetAccessControl(AccessControlSections.Access);
+        Assert.That(after.AreAccessRulesProtected, Is.EqualTo(beforeProtected));
+        Assert.That(
+            after.GetSecurityDescriptorSddlForm(AccessControlSections.Access),
+            Is.EqualTo(beforeSddl));
         var rules = after
             .GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier))
             .Cast<FileSystemAccessRule>()
