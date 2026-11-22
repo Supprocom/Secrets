@@ -1,0 +1,283 @@
+SUPPROCOM KOMERCIJALNA LICENCA, VERZIJA 1.0 (prijevod na hrvatski jezik)
+
+Ovo je prijevod engleskog teksta iz datoteke COMMERCIAL-LICENSE. Ako se tekstovi razlikuju, mjerodavan je
+engleski tekst (odjeljak 17).
+
+> **VAŽNO: REGISTRIRAJTE SVOJE POSLOVANJE, INAČE SU VAŠE UPLATE DONACIJE.**
+>
+> **Ova se licenca prodaje samo poslovnim subjektima. Da biste je stekli, pošaljite podatke o svom poslovanju na
+> supprocom@mkn8rn.com u roku od 30 dana od početka Sponzorstva (odjeljak 0). Ako ne stignu na vrijeme, vaše su
+> uplate donacije: ne daju licencu, ne fakturiraju se i ne vraćaju se.**
+
+## 0. Registracija poslovanja
+
+1. Da bi stekao ovu licencu, Stjecatelj licencije registrira se tako da Davatelju licencije na
+   supprocom@mkn8rn.com pošalje podatke potrebne za izdavanje računa: pravni naziv, adresu, identifikacijski broj
+   za PDV (potreban za prijenos porezne obveze, odjeljak 20.4) ili, ako ga nema, svoj porezni broj, te adresu
+   e-pošte za kontakt. Obavijest o privatnosti na https://supprocom.github.io/privacy/ objašnjava kako se ti
+   podaci koriste.
+2. Stjecatelj licencije na istu adresu obavještava Davatelja licencije o svakoj promjeni tih podataka u roku od
+   30 dana od promjene. Stjecatelj licencije odgovara za troškove, poreze, kamate i kazne koje Davatelj licencije
+   snosi zato što su podaci nedostajali, bili netočni ili zastarjeli.
+3. Davatelj licencije ne izdaje račun prije nego što podaci stignu. Ako stignu u roku od 30 dana od dana početka
+   Sponzorstva, licenca vrijedi od toga dana, a Davatelj licencije fakturira svaku uplatu od tada.
+4. Ako ne stignu u tih 30 dana, svaka uplata izvršena prije njihova dolaska je donacija. Donacija ne daje
+   licencu ni prava iz ove licence, nije Plaćeni mjesec, ne fakturira se i ne vraća se. Proizvodi stjecatelja
+   licencije isporučeni dok su uplate bile donacije nisu licencirani prema ovoj licenci. Ako podaci stignu
+   kasnije, licenca počinje s prvom uplatom nakon njihova dolaska.
+
+## 1. Strane i predmet
+
+1. Davatelj licencije: Marko Kopričanec, koji posluje kao mkn8rn, obrt za računalno programiranje i usluge,
+   vl. Marko Kopričanec, Ulica Ivana Gundulića 98, 48260 Križevci, Republika Hrvatska, OIB 56808390180,
+   PDV ID HR56808390180, MBO 99342758, koji objavljuje kao mkn8rn / Supprocom.
+   Adresa za obavijesti: supprocom@mkn8rn.com.
+2. Softver koji Supprocom (https://github.com/Supprocom) objavljuje pod licencom GNU Affero General Public
+   License, verzija 3 (AGPL-3.0), dostupan je i pod ovom licencom ("Softver"). To obuhvaća svaki takav projekt
+   Supprocoma.
+3. Ako imate aktivno Sponzorstvo (odjeljak 2) i registrirali ste se (odjeljak 0), Softver smijete koristiti pod
+   ovom licencom umjesto pod AGPL-3.0. U suprotnom vrijedi AGPL-3.0.
+
+## 2. Definicije
+
+- "Davatelj licencije" ("Licensor"): osoba navedena u odjeljku 1.1, nositelj imovinskih prava na Softveru.
+- "Mali stjecatelj licencije" ("Small Licensee"): bilo koji od sljedećih, kada djeluje u svrhe svoje trgovačke
+  djelatnosti, poslovanja, obrta ili profesije:
+  - fizička osoba, uključujući samostalnog poduzetnika, koja je jedina osoba koja radi za njezino poslovanje;
+  - trgovačko društvo ili druga pravna osoba s jednim vlasnikom koji je ujedno jedina osoba koja za nju radi;
+  - neprofitna organizacija.
+- "Poduzeće" ("Enterprise"): svaka osoba ili organizacija koja djeluje u takve svrhe, a nije Mali stjecatelj
+  licencije.
+- "Stjecatelj licencije" ("Licensee"): Mali stjecatelj licencije ili Poduzeće koje ima Sponzorstvo, zajedno sa
+  svima koji za njega rade (zaposlenici i ugovorni suradnici) dok djeluju za njega. Svaka pravna osoba je zaseban
+  Stjecatelj licencije: matično, ovisno ili sestrinsko društvo treba vlastito Sponzorstvo.
+- "Sponzorstvo" ("Sponsorship"): ponavljajuće mjesečno sponzorstvo GitHub računa Supprocom putem GitHub Sponsors
+  (https://github.com/sponsors/Supprocom), s vlastitog GitHub korisničkog ili organizacijskog računa Stjecatelja
+  licencije, u iznosu od najmanje:
+  - 1 USD mjesečno za Malog stjecatelja licencije;
+  - 100 USD mjesečno za Poduzeće.
+- "Plaćeni mjesec" ("Paid Month"): jedno mjesečno obračunsko razdoblje Sponzorstva, kako ga GitHub naplaćuje,
+  koje je Stjecatelj licencije platio kao naknadu za licencu prema odjeljku 0. Donacija prema odjeljku 0.4 nije
+  Plaćeni mjesec.
+- "Verzija" ("Version"): izdanje projekta Supprocoma objavljeno kao paket, zajedno s njegovim izvornim kodom u
+  commitu iz kojeg je izgrađeno; za projekt bez paketa, njegova zadana grana kakva je bila određenog dana.
+- "Pričuvna verzija" ("Fallback Version"): Verzija izdana prije prvog dana niza od 12 uzastopnih Plaćenih
+  mjeseci koji je Stjecatelj licencije završio.
+- "Proizvod stjecatelja licencije" ("Licensee Product"): softver ili usluga koju je izradio Stjecatelj licencije,
+  a koja uključuje Softver, povezuje se sa Softverom ili ga pokreće.
+
+## 3. Tko smije steći ovu licencu
+
+Ova se licenca nudi samo osobama koje djeluju u svrhe svoje trgovačke djelatnosti, poslovanja, obrta ili
+profesije. Ne nudi se potrošačima. Potrošač smije koristiti Softver pod AGPL-3.0.
+
+## 4. Kako se licenca sklapa
+
+1. Ovaj je tekst objavljen u datoteci COMMERCIAL-LICENSE svakog repozitorija Supprocoma na koji se odnosi, a
+   poveznica na njega nalazi se u razinama Sponzorstva. Za svaku Verziju mjerodavan je tekst datoteke
+   COMMERCIAL-LICENSE u vlastitom GitHub repozitoriju tog projekta (https://github.com/Supprocom/<projekt>) u
+   commitu iz kojeg je Verzija izgrađena; za projekt bez paketa, datoteka na zadanoj grani na predmetni dan. On
+   ima prednost pred svim drugim primjercima, uključujući primjerke u paketima.
+2. Započinjanjem Sponzorstva na razini za svoju kategoriju i registracijom prema odjeljku 0, Stjecatelj licencije
+   prihvaća, za svaku Verziju koju koristi, tekst koji je za tu Verziju mjerodavan prema točki 1. Stjecatelj
+   licencije potvrđuje da je pročitao ovaj tekst te da ga može pohraniti i reproducirati.
+
+## 5. Davanje licence
+
+Davatelj licencije daje Stjecatelju licencije svjetsku, neisključivu, neprenosivu licencu, od početka
+određenog odjeljkom 0 i dok god je Sponzorstvo aktivno i plaćeno (odjeljak 7), da:
+
+1. reproducira, koristi i prilagođava (mijenja) svaku verziju Softvera;
+2. uključuje Softver, izmijenjen ili ne, u Proizvode stjecatelja licencije, distribuira ih u objektnom obliku i
+   stavlja ih na raspolaganje javnosti putem mreže;
+
+sve bez obveza iz AGPL-3.0, uključujući obvezu objave izvornog koda ili njegova nuđenja korisnicima koji sa
+Softverom komuniciraju putem mreže.
+
+Svaki put kada Stjecatelj licencije završi 12 uzastopnih Plaćenih mjeseci, licenca za svaku Pričuvnu verziju
+postaje trajna: traje cijelo vrijeme trajanja autorskog prava, i nakon prestanka Sponzorstva, podložno
+odjeljcima 6, 8 i 19.
+
+## 6. Ograničenja
+
+Stjecatelj licencije ne smije:
+
+1. distribuirati izvorni kod Softvera, izmijenjen ili ne, osim pod AGPL-3.0 ili kao dio Proizvoda stjecatelja
+   licencije isporučenog klijentu prema odjeljku 6A;
+2. prodavati, licencirati ili nuditi Softver samostalno, ili kao proizvod čija je glavna vrijednost sam Softver;
+3. davati podlicence, ustupati ili prenositi ovu licencu, osim što krajnji korisnici Proizvoda stjecatelja
+   licencije smiju koristiti Softver kao dio tog proizvoda, klijenti ga smiju koristiti prema odjeljku 6A, a
+   odjeljak 21 dopušta prijenos;
+4. uklanjati ili mijenjati obavijesti Davatelja licencije o autorskom pravu;
+5. koristiti Softver, njegov izvorni kod ili dokumentaciju, u cijelosti ili djelomično, za treniranje, dodatno
+   treniranje (fine-tuning) ili evaluaciju modela strojnog učenja ili umjetne inteligencije, niti ih uključivati
+   u skup podataka za tu svrhu. Time se ne zabranjuje korištenje AI asistenata za programiranje radi pisanja,
+   čitanja, pregleda ili održavanja vlastitog koda Stjecatelja licencije koji uključuje ili koristi Softver, ako
+   Stjecatelj licencije poduzme razumne korake, poput postavki ili poslovnih uvjeta pružatelja, kako pružatelj
+   taj kod ne bi koristio za treniranje svojih modela.
+
+## 6A. Rad za klijente
+
+1. Stjecatelj licencije smije izraditi Proizvod stjecatelja licencije za klijenta i isporučiti ga pod vlastitim
+   Sponzorstvom, ako je iznos koji Stjecatelj licencije stvarno plaća najmanje jednak iznosu koji bi klijent
+   morao platiti sam. Mali stjecatelj licencije koji plaća 1 USD smije isporučivati klijentima koji su Mali
+   stjecatelji licencije ili privatne osobe, ali ne Poduzeću. Mali stjecatelj licencije koji odluči plaćati
+   100 USD smije isporučivati i Poduzećima.
+2. Klijent smije koristiti isporučeni Proizvod stjecatelja licencije onakav kakav je isporučen. Za izmjenu
+   Softvera u njemu, ili za daljnju distribuciju Softvera, klijentu je potrebno vlastito Sponzorstvo.
+3. Rad za klijenta koji ga ne smije primiti prema točki 1 zahtijeva klijentovo vlastito Sponzorstvo u iznosu za
+   njegovu kategoriju. Stjecatelj licencije tada radi pod klijentovom licencom kao klijentov ugovorni suradnik
+   (odjeljak 2, "Stjecatelj licencije").
+
+## 7. Kada Sponzorstvo prestane
+
+1. Licenca prema odjeljku 5 traje do kraja posljednjeg Plaćenog mjeseca.
+2. Nakon toga Stjecatelj licencije zadržava trajnu licencu za svaku Pričuvnu verziju, ako je ima.
+3. Primjerci Proizvoda stjecatelja licencije isporučeni krajnjim korisnicima ili klijentima prije kraja
+   posljednjeg Plaćenog mjeseca ostaju licencirani za te krajnje korisnike i klijente, onakvi kakvi su isporučeni.
+4. Svako drugo korištenje potpada pod AGPL-3.0, osim ako Stjecatelj licencije započne novo Sponzorstvo. Uzastopni
+   Plaćeni mjeseci ponovno se broje od početka novog Sponzorstva.
+
+## 8. Prestanak zbog povrede
+
+Ova licenca prestaje ako Stjecatelj licencije povrijedi odjeljak 6 i ne otkloni povredu u roku od 30 dana od
+pisane obavijesti Davatelja licencije (dovoljna je e-pošta na kontaktnu adresu GitHub računa Stjecatelja
+licencije). Primjerci Proizvoda stjecatelja licencije već isporučeni krajnjim korisnicima ili klijentima ostaju
+licencirani za njih, onakvi kakvi su isporučeni.
+
+## 9. Dokaz
+
+Sponzorstvo, kako ga bilježi GitHub, zajedno s računima Davatelja licencije, dokaz je licence, uključujući koji
+su mjeseci plaćeni. Privatno sponzorstvo se računa. Stjecatelj licencije na zahtjev daje Davatelju licencije
+naziv svog GitHub računa i pravni naziv, kako bi Davatelj licencije mogao provjeriti. Stjecatelj licencije vodi
+vlastitu evidenciju svojih Plaćenih mjeseci. Na pisani zahtjev, najviše jednom godišnje osim ako Davatelj
+licencije ima razloga sumnjati na povredu, Stjecatelj licencije u roku od 30 dana daje Davatelju licencije ono
+što je razumno potrebno za potvrdu njegove kategorije i kategorija njegovih klijenata prema odjeljku 6A, poput
+izvatka iz poslovnog registra. Davatelj licencije to koristi samo za provjeru poštivanja ove licence.
+
+## 10. Kategorija
+
+Stjecatelj licencije koji je Poduzeće ne smije licencirati po iznosu za Malog stjecatelja licencije. Mali
+stjecatelj licencije koji postane Poduzeće treba iznos za Poduzeće za mjesece nakon promjene. Osoba koja radi za
+Poduzeće pokrivena je za taj rad samo Sponzorstvom Poduzeća.
+
+Stjecatelj licencije koji je platio manje od iznosa za svoju kategoriju, ili koji je isporučio klijentu protivno
+odjeljku 6A, duguje Davatelju licencije razliku između iznosa koji je trebao platiti i iznosa koji je platio, za
+svaki predmetni mjesec, sa zakonskim zateznim kamatama od dana dospijeća iznosa za svaki mjesec. Plaćanjem
+razlike i kamata ti mjeseci postaju licencirani.
+
+## 11. Prava koja vam zakon ionako daje
+
+Ništa u ovoj licenci ne ograničava ono što zakoniti korisnik računalnog programa smije činiti bez dopuštenja
+Davatelja licencije prema člancima 5. stavcima 2. i 3. te članku 6. Direktive 2009/24/EZ i hrvatskom Zakonu o
+autorskom pravu i srodnim pravima (izrada sigurnosne kopije, promatranje, proučavanje i testiranje programa te
+dekompiliranje radi interoperabilnosti). Moralna prava autora ostaju netaknuta.
+
+## 12. Jamstvo i sigurnosna ažuriranja
+
+1. U mjeri u kojoj zakon dopušta, Softver se pruža "kakav jest", bez ikakvog izričitog ili prešutnog jamstva,
+   uključujući prikladnost za određenu svrhu i nepovređivanje prava. Ova licenca ne obećava podršku, održavanje
+   ni ažuriranje osim prema točki 2.
+2. Za svaku Verziju Davatelj licencije besplatno pruža sigurnosna ažuriranja tijekom razdoblja podrške od pet
+   godina od izdavanja te Verzije, dok je poslovanje Davatelja licencije aktivno. Kraj razdoblja podrške svake
+   Verzije (mjesec i godina) naveden je uz tu Verziju. Ako poslovanje treba prestati, Davatelj licencije o tome
+   unaprijed obavještava Stjecatelje licencije u repozitorijima. Ranjivosti se prijavljuju na
+   vulnerabilities@mkn8rn.com, prema sigurnosnoj politici na https://supprocom.github.io/security/.
+3. Sigurnosno ažuriranje Verzije licencirano je, bez naknade, svakom Stjecatelju licencije koji je licenciran za
+   tu Verziju, uključujući na temelju trajne licence. Kada Davatelj licencije ranjivost otkloni samo u kasnijoj
+   Verziji, svaki takav Stjecatelj licencije smije tu kasniju Verziju koristiti pod ovom licencom, bez naknade,
+   umjesto ranije.
+
+## 13. Ograničenje odgovornosti
+
+1. Davatelj licencije ne odgovara za štetu prouzročenu običnom nepažnjom, osim kako je određeno u točki 3.
+2. Kada Davatelj licencije unatoč točki 1 odgovara za običnu nepažnju, njegova je odgovornost ograničena na
+   iznose koje je Stjecatelj licencije platio u 12 mjeseci prije zahtjeva.
+3. Ništa u ovoj licenci ne isključuje niti ograničava odgovornost koju zakon ne dopušta isključiti ili
+   ograničiti, uključujući odgovornost za namjeru ili krajnju nepažnju, za smrt ili tjelesnu ozljedu te prema
+   propisima o odgovornosti za neispravne proizvode.
+
+## 14. Izmjene
+
+Davatelj licencije smije objavljivati nove verzije ove licence. Nova verzija uređuje samo Verzije Softvera
+izdane s njom; ranije Verzije ostaju pod tekstom s kojim su izdane. Davatelj licencije smije mijenjati i iznose.
+Novi iznos primjenjuje se od sljedećeg Plaćenog mjeseca Stjecatelja licencije koji počinje najmanje 30 dana nakon
+što ga Davatelj licencije objavi u repozitorijima i na stranici Sponsors. Nijedna izmjena ne oduzima trajnu
+licencu već danu za Pričuvnu verziju. Stjecatelj licencije koji ne prihvati izmjenu smije prekinuti svoje
+Sponzorstvo, a primjenjuje se odjeljak 7.
+
+## 15. Djelomična ništetnost
+
+Ako je neka odredba ove licence nevaljana ili neprovediva, ostatak ostaje na snazi. Nevaljana odredba zamjenjuje
+se valjanom koja se, u mjeri u kojoj zakon dopušta, najviše približava njezinoj svrsi.
+
+## 16. Mjerodavno pravo i sudovi
+
+1. Na ovu se licencu primjenjuje pravo Republike Hrvatske, isključujući njegova kolizijska pravila i
+   isključujući Konvenciju Ujedinjenih naroda o ugovorima o međunarodnoj prodaji robe.
+2. Za sporove iz ove licence nadležni su sudovi u Zagrebu: Trgovački sud u Zagrebu te, za sporove iz
+   nadležnosti općinskih sudova, Općinski građanski sud u Zagrebu. Kada zakon spor dodjeljuje isključivo drugom
+   sudu, odlučuje taj sud.
+
+## 17. Jezik
+
+Ova je licenca napisana na engleskom jeziku. Uz nju je objavljen prijevod na hrvatski jezik; ako se dva teksta
+razlikuju, mjerodavan je engleski tekst.
+
+## 18. Kod trećih strana
+
+Ova licenca obuhvaća samo one dijelove Softvera na kojima Davatelj licencije ima prava. Komponente trećih strana
+uključene u Softver ili koje Softver zahtijeva ostaju pod vlastitim licencama, kojih se Stjecatelj licencije
+pridržava. Ovisnosti paketa projekta pokazuju koje komponente trećih strana projekt zahtijeva.
+
+## 19. Sankcije
+
+Stjecatelj licencije potvrđuje da on, njegovi vlasnici i njegovi klijenti nisu podvrgnuti mjerama ograničavanja
+(sankcijama) Europske unije te da Softver neće koristiti, isporučivati ni stavljati na raspolaganje protivno
+njima. Ako to nije istina ili prestane biti istina, Davatelj licencije smije odmah okončati ovu licencu,
+uključujući svaku trajnu licencu prema odjeljku 5.
+
+## 20. Plaćanja i porezi
+
+1. Iznosi su u američkim dolarima i plaćaju se putem GitHub Sponsors. Uključuju porez na dodanu vrijednost (PDV)
+   kada se PDV primjenjuje.
+2. Već plaćeni mjeseci i donacije prema odjeljku 0.4 ne vraćaju se, uključujući kada licenca prestane prema
+   odjeljku 8 ili 19.
+3. Računi se izdaju u eurima. Iznosi u američkim dolarima preračunavaju se po tečaju Hrvatske narodne banke (HNB)
+   na dan izdavanja računa.
+4. Stjecatelju licencije s poslovnim nastanom u drugoj državi članici EU-a račun se izdaje uz prijenos porezne
+   obveze samo ako je prije dana izdavanja računa dao svoj identifikacijski broj za PDV prema odjeljku 0.1 i
+   pisano zatražio primjenu prijenosa porezne obveze. U suprotnom Davatelj licencije obračunava hrvatski PDV,
+   uključen u iznose iz točke 1.
+5. Kada Davatelj licencije Stjecatelju licencije duguje bilo kakav povrat, plaća ga bankovnom doznakom na račun
+   (IBAN) koji Stjecatelj licencije pisano dostavi. Stjecatelj licencije odgovara za točnost podataka o računu.
+
+## 21. Prijenos
+
+1. Davatelj licencije smije prenijeti svoja prava i obveze iz ove licence na pravnog sljednika, poput društva
+   koje preuzme njegovo poslovanje. Davatelj licencije o prijenosu obavještava Stjecatelje licencije u
+   repozitorijima.
+2. Kada se Stjecatelj licencije pripoji ili spoji, ili se njegovo poslovanje preuzme u cijelosti, ova licenca
+   prelazi na sljednika. Sljednik zadržava Sponzorstvo u iznosu za svoju kategoriju od sljedećeg mjeseca.
+
+## 22. Bez prava na žigove
+
+Ova licenca ne daje pravo na korištenje naziva, logotipa ili žigova Supprocom ili mkn8rn, osim za istinitu izjavu
+da Proizvod stjecatelja licencije koristi Softver.
+
+## 23. Bez obeštećenja
+
+Davatelj licencije ne brani Stjecatelja licencije od zahtjeva trećih strana niti ih plaća, uključujući zahtjeve
+da Softver povređuje njihova prava. Odjeljak 13.3 i dalje se primjenjuje.
+
+## 24. Trajanje odredbi nakon prestanka
+
+Nakon prestanka ove licence i dalje vrijede: odjeljak 0.2 o podacima za izdavanje računa, svaka trajna licenca
+prema odjeljku 5, odjeljci 7.3 i 8 o već isporučenim primjercima, odjeljak 10 o dugovanim iznosima te odjeljci
+11 do 13, 15 do 18, 22 i 23.
+
+## 25. Cjelokupni sporazum
+
+Ova licenca je cjelokupni sporazum između Davatelja licencije i Stjecatelja licencije o Softveru pod ovom
+licencom. Kada Stjecatelj licencije koristi Softver pod ovom licencom, ona za to korištenje zamjenjuje AGPL-3.0.
+Primjerci koje je Stjecatelj licencije pribavio i koristi pod AGPL-3.0 ostaju pod AGPL-3.0.

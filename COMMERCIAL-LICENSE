@@ -1,0 +1,267 @@
+SUPPROCOM COMMERCIAL LICENSE, VERSION 1.0
+
+> **IMPORTANT: REGISTER YOUR BUSINESS, OR YOUR PAYMENTS ARE DONATIONS.**
+>
+> **This license is sold only to businesses. To get it, send your business details to supprocom@mkn8rn.com
+> within 30 days of starting your Sponsorship (section 0). If they don't arrive in time, your payments are
+> donations: they give no license, are not invoiced and are not refunded.**
+
+## 0. Registering your business
+
+1. To take this license, the Licensee registers by sending the Licensor, at supprocom@mkn8rn.com, the details
+   needed to invoice it: legal name, address, VAT identification number (needed for the reverse charge, section
+   20.4) or, if it has none, its tax number, and a contact email. The privacy notice at
+   https://supprocom.github.io/privacy/ explains how they are used.
+2. The Licensee tells the Licensor at the same address of any change to these details within 30 days of the
+   change. The Licensee is liable for the costs, taxes, interest and penalties the Licensor incurs because the
+   details were missing, wrong or out of date.
+3. The Licensor issues no invoice before the details arrive. If they arrive within 30 days of the day the
+   Sponsorship began, the license runs from that day, and the Licensor invoices every payment from it on.
+4. If they don't arrive within those 30 days, every payment made before they arrive is a donation. A donation
+   gives no license and no rights under this license, is not a Paid Month, is not invoiced and is not refunded.
+   Licensee Products delivered while payments were donations are not licensed under it. If the details arrive
+   later, the license starts with the first payment after they arrive.
+
+## 1. Parties and what this is
+
+1. Licensor: Marko Kopričanec, trading as mkn8rn, obrt za računalno programiranje i usluge, vl. Marko Kopričanec,
+   Ulica Ivana Gundulića 98, 48260 Križevci, Republic of Croatia, OIB 56808390180, VAT ID HR56808390180,
+   MBO 99342758, publishing as mkn8rn / Supprocom.
+   Contact for notices: supprocom@mkn8rn.com.
+2. Software published by Supprocom (https://github.com/Supprocom) under the GNU Affero General Public License,
+   version 3 (AGPL-3.0), is also available under this license (the "Software"). This covers every such
+   Supprocom project.
+3. If you hold an active Sponsorship (section 2) and have registered (section 0), you may use the Software under
+   this license instead of the AGPL-3.0. If you don't, the AGPL-3.0 applies.
+
+## 2. Definitions
+
+- "Licensor": the person named in section 1.1, the holder of the economic rights in the Software.
+- "Small Licensee": any of these, acting for purposes of their trade, business, craft or profession:
+  - a natural person, including a sole proprietor, who is the only person working for their business;
+  - a company or other legal entity with a single owner who is also the only person working for it;
+  - a non-profit organisation.
+- "Enterprise": any person or organisation acting for such purposes that is not a Small Licensee.
+- "Licensee": the Small Licensee or Enterprise that holds the Sponsorship, together with everyone who works for
+  it (employees and contractors) while acting for it. Each legal entity is a separate Licensee: a parent,
+  subsidiary or sister company needs its own Sponsorship.
+- "Sponsorship": a recurring monthly GitHub Sponsors sponsorship of the Supprocom GitHub account
+  (https://github.com/sponsors/Supprocom), made from the Licensee's own GitHub user or organisation account, of at
+  least:
+  - USD 1 per month for a Small Licensee;
+  - USD 100 per month for an Enterprise.
+- "Paid Month": one monthly billing period of the Sponsorship, as GitHub bills it, that the Licensee paid as a
+  license fee under section 0. A donation under section 0.4 is not a Paid Month.
+- "Version": a release of a Supprocom project published as a package, together with its source code at the
+  commit it was built from; for a project without packages, its default branch as it stood on a given day.
+- "Fallback Version": a Version released before the first day of a run of 12 consecutive Paid Months that the
+  Licensee has completed.
+- "Licensee Product": software or a service made by the Licensee that includes, links to, or runs the Software.
+
+## 3. Who may take this license
+
+This license is offered only to persons acting for purposes of their trade, business, craft or profession. It is
+not offered to consumers. A consumer may use the Software under the AGPL-3.0.
+
+## 4. How the license is concluded
+
+1. This text is published in the COMMERCIAL-LICENSE file of every Supprocom repository it covers, and is linked
+   from the Sponsorship tiers. For each Version, the text that governs is the COMMERCIAL-LICENSE file in that
+   project's own GitHub repository (https://github.com/Supprocom/<project>) at the commit the Version was built
+   from; for a project without packages, the file on the default branch on the day concerned. It prevails over
+   every other copy, including copies inside packages.
+2. By starting a Sponsorship at the tier for its category and registering under section 0, the Licensee
+   accepts, for each Version it uses, the text that governs that Version under point 1. The Licensee confirms it
+   has read this text and can store and reproduce it.
+
+## 5. Grant
+
+The Licensor grants the Licensee a worldwide, non-exclusive, non-transferable license, from the start set by
+section 0 and for as long as the Sponsorship is active and paid (section 7), to:
+
+1. reproduce, use and adapt (modify) every version of the Software;
+2. include the Software, modified or not, in Licensee Products, distribute them in object form, and make them
+   available to the public over a network;
+
+all without the obligations of the AGPL-3.0, including the obligation to publish source code or to offer it to
+users who interact with the Software over a network.
+
+Each time the Licensee completes 12 consecutive Paid Months, the license to every Fallback Version becomes
+perpetual: it lasts for the whole term of copyright, also after the Sponsorship ends, subject to sections 6, 8 and
+19.
+
+## 6. Limits
+
+The Licensee may not:
+
+1. distribute the Software's source code, modified or not, except under the AGPL-3.0, or as part of a Licensee
+   Product delivered to a client under section 6A;
+2. sell, license or offer the Software on its own, or as a product whose main value is the Software itself;
+3. sublicense, assign or transfer this license, except that a Licensee Product's end users may use the
+   Software as part of that product, clients may use it under section 6A, and section 21 allows a transfer;
+4. remove or change the Licensor's copyright notices;
+5. use the Software, its source code or its documentation, in whole or in part, to train, fine-tune or evaluate
+   a machine-learning or artificial-intelligence model, or include them in a dataset for that purpose. This
+   does not forbid using AI coding assistants to write, read, review or maintain the Licensee's own code that
+   includes or uses the Software, if the Licensee takes reasonable steps, such as the provider's settings or
+   business terms, so that the provider does not use that code to train its models.
+
+## 6A. Client work
+
+1. A Licensee may make a Licensee Product for a client and deliver it under the Licensee's own Sponsorship, if
+   the amount the Licensee actually pays is at least the amount the client would have to pay itself. A Small
+   Licensee paying USD 1 may deliver to clients that are Small Licensees or private persons, but not to an
+   Enterprise. A Small Licensee that chooses to pay USD 100 may also deliver to Enterprises.
+2. The client may use the delivered Licensee Product as delivered. To modify the Software in it, or to
+   redistribute the Software, the client needs its own Sponsorship.
+3. Work for a client that may not receive it under point 1 needs the client's own Sponsorship at its own amount.
+   The Licensee then works under the client's license as the client's contractor (section 2, "Licensee").
+
+## 7. When the Sponsorship ends
+
+1. The license under section 5 continues to the end of the last Paid Month.
+2. After that, the Licensee keeps a perpetual license to every Fallback Version, if it has any.
+3. Copies of Licensee Products delivered to end users or clients before the end of the last Paid Month stay
+   licensed for those end users and clients, as delivered.
+4. Any other use falls under the AGPL-3.0, unless the Licensee starts a new Sponsorship. Consecutive Paid Months
+   count again from the start of the new Sponsorship.
+
+## 8. Ending for breach
+
+This license ends if the Licensee breaks section 6 and doesn't fix it within 30 days of written notice from the
+Licensor (email to the Licensee's GitHub contact address is enough). Copies of Licensee Products already delivered
+to end users or clients stay licensed for them, as delivered.
+
+## 9. Proof
+
+The Sponsorship, as recorded by GitHub, together with the Licensor's invoices, is the proof of license, including
+which months were paid. A private sponsorship counts. The Licensee gives the Licensor its GitHub account name and
+legal name on request, so the Licensor can check. The Licensee keeps its own record of its Paid Months. On written
+request, at most once a year unless the Licensor has reason to suspect a breach, the Licensee gives the Licensor
+within 30 days what is reasonably needed to confirm its category and its clients' categories under section 6A, such
+as an extract from a business register. The Licensor uses this only to check compliance with this license.
+
+## 10. Category
+
+A Licensee that is an Enterprise may not license at the Small Licensee amount. A Small Licensee that becomes an
+Enterprise needs the Enterprise amount for the months after the change. A person who works for an Enterprise is
+covered for that work only by the Enterprise's Sponsorship.
+
+A Licensee that paid less than its category, or that delivered to a client in breach of section 6A, owes the
+Licensor the difference between the amount it should have paid and the amount it paid, for every month
+concerned, with statutory default interest from the day each month's amount was due. Payment of the difference
+and the interest makes those months licensed.
+
+## 11. Rights the law gives you anyway
+
+Nothing in this license limits what a lawful user of a computer program may do without the Licensor's
+permission under Articles 5(2), 5(3) and 6 of Directive 2009/24/EC and the Croatian Copyright and Related Rights
+Act (making a back-up copy, observing, studying and testing the program, and decompiling for interoperability).
+The author's moral rights are not affected.
+
+## 12. Warranty and security updates
+
+1. To the extent the law allows, the Software is provided "as is", without warranty of any kind, express or
+   implied, including fitness for a particular purpose and non-infringement. This license promises no support,
+   maintenance or update other than under point 2.
+2. For each Version, the Licensor provides security updates free of charge for a support period of five years
+   from that Version's release, while the Licensor's business is active. The end of each Version's support
+   period (month and year) is stated with that Version. If the business is to cease, the Licensor tells
+   Licensees beforehand in the repositories. Vulnerabilities are reported to vulnerabilities@mkn8rn.com,
+   under the security policy at https://supprocom.github.io/security/.
+3. A security update to a Version is licensed, at no charge, to every Licensee licensed for that Version,
+   including under a perpetual license. Where the Licensor fixes a vulnerability only in a later Version, every
+   such Licensee may use that later Version under this license, free of charge, in place of the earlier one.
+
+## 13. Limitation of liability
+
+1. The Licensor is not liable for damage caused by ordinary negligence, except as set out in point 3.
+2. Where the Licensor is liable for ordinary negligence despite point 1, its liability is limited to the amounts
+   the Licensee paid in the 12 months before the claim.
+3. Nothing in this license excludes or limits liability that the law does not allow to be excluded or limited,
+   including liability for intent or gross negligence, for death or personal injury, and under the law on
+   liability for defective products.
+
+## 14. Changes
+
+The Licensor may publish new versions of this license. A new version governs only Versions of the Software
+released with it; earlier Versions stay under the text they were released with. The Licensor may also change
+the amounts. A new amount applies from the Licensee's next Paid Month at least 30 days after the Licensor
+announces it in the repositories and on the Sponsors page. No change takes away a perpetual license already
+granted to a Fallback Version. A Licensee that doesn't accept a change may end its Sponsorship, and section 7 applies.
+
+## 15. Severability
+
+If a provision of this license is invalid or unenforceable, the rest stays in force. The invalid provision is
+replaced by a valid one that comes as close as the law allows to its purpose.
+
+## 16. Law and courts
+
+1. This license is governed by the law of the Republic of Croatia, excluding its conflict-of-law rules and
+   excluding the United Nations Convention on Contracts for the International Sale of Goods.
+2. Disputes arising from this license fall under the jurisdiction of the courts in Zagreb: the Commercial Court
+   in Zagreb (Trgovački sud u Zagrebu), and, for disputes within the jurisdiction of municipal courts, the
+   Municipal Civil Court in Zagreb (Općinski građanski sud u Zagrebu). Where the law gives a dispute exclusively
+   to another court, that court decides.
+
+## 17. Language
+
+This license is written in English. A Croatian translation is published beside it; if the two differ, the
+English text prevails.
+
+## 18. Third-party code
+
+This license covers only the parts of the Software in which the Licensor holds the rights. Third-party
+components included in or required by the Software stay under their own licenses, which the Licensee follows.
+A project's package dependencies show which
+third-party components it requires.
+
+## 19. Sanctions
+
+The Licensee confirms that it, its owners and its clients are not subject to European Union restrictive measures
+(sanctions), and that it will not use, deliver or make available the Software in breach of them. If this is
+untrue or stops being true, the Licensor may end this license at once, including any perpetual license under
+section 5.
+
+## 20. Payments and taxes
+
+1. Amounts are in US dollars and are paid through GitHub Sponsors. They include value added tax (VAT) where VAT
+   applies.
+2. Months already paid and donations under section 0.4 are not refunded, including when the license ends under
+   section 8 or 19.
+3. Invoices are issued in euros. Amounts in US dollars are converted at the exchange rate of the Croatian
+   National Bank (HNB) on the invoice date.
+4. A Licensee established in another EU Member State is invoiced under the reverse charge only if, before the
+   invoice date, it gave its VAT identification number under section 0.1 and asked in writing for the reverse
+   charge to be applied. Otherwise the Licensor charges Croatian VAT, included in the amounts under point 1.
+5. Where the Licensor owes the Licensee any refund, it pays it by bank transfer to the account (IBAN) the
+   Licensee gives in writing. The Licensee is liable for the account details being correct.
+
+## 21. Transfer
+
+1. The Licensor may transfer its rights and obligations under this license to a successor, such as a company
+   that takes over its business. The Licensor tells Licensees of the transfer in the repositories.
+2. When a Licensee merges, or its business is acquired as a whole, this license passes to the successor. The
+   successor keeps the Sponsorship at the amount for its own category from the next month.
+
+## 22. No trademark rights
+
+This license gives no right to use the names, logos or trademarks Supprocom or mkn8rn, except to state truthfully
+that a Licensee Product uses the Software.
+
+## 23. No indemnity
+
+The Licensor does not defend the Licensee against, or pay for, claims by third parties, including claims that
+the Software infringes their rights. Section 13.3 still applies.
+
+## 24. Survival
+
+After this license ends, these continue: section 0.2 on invoicing details, any perpetual license under section 5,
+sections 7.3 and 8 on copies already delivered, section 10 on amounts owed, and sections 11 to 13, 15 to 18, 22 and
+23.
+
+## 25. Whole agreement
+
+This license is the whole agreement between the Licensor and the Licensee about the Software under this license.
+Where the Licensee uses the Software under this license, it replaces the AGPL-3.0 for that use. Copies the
+Licensee obtained and uses under the AGPL-3.0 stay under the AGPL-3.0.
