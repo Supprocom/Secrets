@@ -1,26 +1,8 @@
-SUPPROCOM COMMERCIAL LICENSE, VERSION 1.0
+SUPPROCOM COMMERCIAL LICENSE, VERSION 2.0
 
-> **IMPORTANT: REGISTER YOUR BUSINESS, OR YOUR PAYMENTS ARE DONATIONS.**
->
-> **This license is sold only to businesses. To get it, send your business details to supprocom@mkn8rn.com
-> within 30 days of starting your Sponsorship (section 0). If they don't arrive in time, your payments are
-> donations: they give no license, are not invoiced and are not refunded.**
-
-## 0. Registering your business
-
-1. To take this license, the Licensee registers by sending the Licensor, at supprocom@mkn8rn.com, the details
-   needed to invoice it: legal name, address, VAT identification number (needed for the reverse charge, section
-   20.4) or, if it has none, its tax number, and a contact email. The privacy notice at
-   https://supprocom.github.io/privacy/ explains how they are used.
-2. The Licensee tells the Licensor at the same address of any change to these details within 30 days of the
-   change. The Licensee is liable for the costs, taxes, interest and penalties the Licensor incurs because the
-   details were missing, wrong or out of date.
-3. The Licensor issues no invoice before the details arrive. If they arrive within 30 days of the day the
-   Sponsorship began, the license runs from that day, and the Licensor invoices every payment from it on.
-4. If they don't arrive within those 30 days, every payment made before they arrive is a donation. A donation
-   gives no license and no rights under this license, is not a Paid Month, is not invoiced and is not refunded.
-   Licensee Products delivered while payments were donations are not licensed under it. If the details arrive
-   later, the license starts with the first payment after they arrive.
+> **This license is for businesses only. It begins when your Patreon membership at the tier for your business
+> begins, and ends when that membership ends, except for versions you have earned by 12 months in a row
+> (section 5). Patreon sells the membership as merchant of record.**
 
 ## 1. Parties and what this is
 
@@ -31,27 +13,32 @@ SUPPROCOM COMMERCIAL LICENSE, VERSION 1.0
 2. Software published by Supprocom (https://github.com/Supprocom) under the GNU Affero General Public License,
    version 3 (AGPL-3.0), is also available under this license (the "Software"). This covers every such
    Supprocom project.
-3. If you hold an active Sponsorship (section 2) and have registered (section 0), you may use the Software under
-   this license instead of the AGPL-3.0. If you don't, the AGPL-3.0 applies.
+3. While you hold an active Membership (section 2), you may use the Software under this license instead of the
+   AGPL-3.0. If you don't, the AGPL-3.0 applies, except to Fallback Versions you keep under section 7.2.
 
 ## 2. Definitions
 
 - "Licensor": the person named in section 1.1, the holder of the economic rights in the Software.
+- "Patreon": Patreon, Inc. and the Patreon companies that bill members under Patreon's terms.
 - "Small Licensee": any of these, acting for purposes of their trade, business, craft or profession:
   - a natural person, including a sole proprietor, who is the only person working for their business;
   - a company or other legal entity with a single owner who is also the only person working for it;
   - a non-profit organisation.
 - "Enterprise": any person or organisation acting for such purposes that is not a Small Licensee.
-- "Licensee": the Small Licensee or Enterprise that holds the Sponsorship, together with everyone who works for
-  it (employees and contractors) while acting for it. Each legal entity is a separate Licensee: a parent,
-  subsidiary or sister company needs its own Sponsorship.
-- "Sponsorship": a recurring monthly GitHub Sponsors sponsorship of the Supprocom GitHub account
-  (https://github.com/sponsors/Supprocom), made from the Licensee's own GitHub user or organisation account, of at
+- "Licensee": the Small Licensee or Enterprise for which a Membership is held, together with everyone who works
+  for it (employees and contractors) while acting for it. Each legal entity is a separate Licensee: a parent,
+  subsidiary or sister company needs its own Membership. One Membership licenses one Licensee.
+- "Membership": a paid Patreon membership of the Licensor's Patreon page (https://www.patreon.com/cw/mkn8rn), held
+  by the Licensee or by a person who works for it and pays for it on the Licensee's behalf, at a tier priced at
   least:
-  - USD 1 per month for a Small Licensee;
-  - USD 100 per month for an Enterprise.
-- "Paid Month": one monthly billing period of the Sponsorship, as GitHub bills it, that the Licensee paid as a
-  license fee under section 0. A donation under section 0.4 is not a Paid Month.
+  - EUR 1 per month for a Small Licensee;
+  - EUR 100 per month for an Enterprise;
+  before any tax Patreon adds. An annual membership of such a tier counts, including any annual discount Patreon
+  gives.
+- "Membership Period": the time from the first payment of a Membership to the end of the last billing period
+  that has been paid, as Patreon records it.
+- "Paid Month": one month of the Membership Period that has been paid, as Patreon records it. Each month covered
+  by a paid annual membership is a Paid Month.
 - "Version": a release of a Supprocom project published as a package, together with its source code at the
   commit it was built from; for a project without packages, its default branch as it stood on a given day.
 - "Fallback Version": a Version released before the first day of a run of 12 consecutive Paid Months that the
@@ -66,18 +53,22 @@ not offered to consumers. A consumer may use the Software under the AGPL-3.0.
 ## 4. How the license is concluded
 
 1. This text is published in the COMMERCIAL-LICENSE file of every Supprocom repository it covers, and is linked
-   from the Sponsorship tiers. For each Version, the text that governs is the COMMERCIAL-LICENSE file in that
+   from the Patreon tiers. For each Version, the text that governs is the COMMERCIAL-LICENSE file in that
    project's own GitHub repository (https://github.com/Supprocom/<project>) at the commit the Version was built
    from; for a project without packages, the file on the default branch on the day concerned. It prevails over
-   every other copy, including copies inside packages.
-2. By starting a Sponsorship at the tier for its category and registering under section 0, the Licensee
-   accepts, for each Version it uses, the text that governs that Version under point 1. The Licensee confirms it
-   has read this text and can store and reproduce it.
+   every other copy, including copies inside packages. A Version released before this text, without a
+   COMMERCIAL-LICENSE file or with an earlier version of it, may also be used under this text.
+2. By starting a Membership at the tier for its category, the Licensee accepts, for each Version it uses, the
+   text that governs that Version under point 1. The Licensee confirms it has read this text and can store and
+   reproduce it.
+3. Patreon's terms govern the Membership itself: billing, payment, cancellation and refunds. This license, not
+   the license Patreon's terms give members to creators' content, governs the Software. The Membership does not
+   need to give access to anything on Patreon.
 
 ## 5. Grant
 
-The Licensor grants the Licensee a worldwide, non-exclusive, non-transferable license, from the start set by
-section 0 and for as long as the Sponsorship is active and paid (section 7), to:
+The Licensor grants the Licensee a worldwide, non-exclusive, non-transferable license, for the Membership Period,
+to:
 
 1. reproduce, use and adapt (modify) every version of the Software;
 2. include the Software, modified or not, in Licensee Products, distribute them in object form, and make them
@@ -87,7 +78,7 @@ all without the obligations of the AGPL-3.0, including the obligation to publish
 users who interact with the Software over a network.
 
 Each time the Licensee completes 12 consecutive Paid Months, the license to every Fallback Version becomes
-perpetual: it lasts for the whole term of copyright, also after the Sponsorship ends, subject to sections 6, 8 and
+perpetual: it lasts for the whole term of copyright, also after the Membership ends, subject to sections 6, 8 and
 19.
 
 ## 6. Limits
@@ -108,56 +99,54 @@ The Licensee may not:
 
 ## 6A. Client work
 
-1. A Licensee may make a Licensee Product for a client and deliver it under the Licensee's own Sponsorship, if
+1. A Licensee may make a Licensee Product for a client and deliver it under the Licensee's own Membership, if
    the amount the Licensee actually pays is at least the amount the client would have to pay itself. A Small
-   Licensee paying USD 1 may deliver to clients that are Small Licensees or private persons, but not to an
-   Enterprise. A Small Licensee that chooses to pay USD 100 may also deliver to Enterprises.
+   Licensee paying EUR 1 may deliver to clients that are Small Licensees or private persons, but not to an
+   Enterprise. A Small Licensee that chooses to pay EUR 100 may also deliver to Enterprises.
 2. The client may use the delivered Licensee Product as delivered. To modify the Software in it, or to
-   redistribute the Software, the client needs its own Sponsorship.
-3. Work for a client that may not receive it under point 1 needs the client's own Sponsorship at its own amount.
+   redistribute the Software, the client needs its own Membership.
+3. Work for a client that may not receive it under point 1 needs the client's own Membership at its own amount.
    The Licensee then works under the client's license as the client's contractor (section 2, "Licensee").
 
-## 7. When the Sponsorship ends
+## 7. When the Membership ends
 
-1. The license under section 5 continues to the end of the last Paid Month.
+1. The license for the Membership Period under section 5 ends when the Membership Period ends: when the
+   Membership is cancelled, lapses because a payment fails, or moves to a tier below the one the Licensee's
+   category needs.
 2. After that, the Licensee keeps a perpetual license to every Fallback Version, if it has any.
-3. Copies of Licensee Products delivered to end users or clients before the end of the last Paid Month stay
-   licensed for those end users and clients, as delivered.
-4. Any other use falls under the AGPL-3.0, unless the Licensee starts a new Sponsorship. Consecutive Paid Months
-   count again from the start of the new Sponsorship.
+3. Copies of Licensee Products delivered to end users or clients during the Membership Period stay licensed for
+   those end users and clients, as delivered.
+4. Any other use falls under the AGPL-3.0, unless the Licensee starts a new Membership. Consecutive Paid Months
+   count again from the start of the new Membership.
 
 ## 8. Ending for breach
 
-This license ends if the Licensee breaks section 6 and doesn't fix it within 30 days of written notice from the
-Licensor (email to the Licensee's GitHub contact address is enough). Copies of Licensee Products already delivered
-to end users or clients stay licensed for them, as delivered.
+This license ends if the Licensee breaks section 6, 6A or 10 and doesn't fix it within 30 days of written notice
+from the Licensor (a Patreon message to the member, or email, is enough). A Licensee fixes a breach of section 6A
+or 10 by moving to the Membership amount it needs, or, for a client, by the client starting its own Membership.
+Copies of Licensee Products already delivered to end users or clients stay licensed for them, as delivered.
 
 ## 9. Proof
 
-The Sponsorship, as recorded by GitHub, together with the Licensor's invoices, is the proof of license, including
-which months were paid. A private sponsorship counts. The Licensee gives the Licensor its GitHub account name and
-legal name on request, so the Licensor can check. The Licensee keeps its own record of its Paid Months. On written
-request, at most once a year unless the Licensor has reason to suspect a breach, the Licensee gives the Licensor
-within 30 days what is reasonably needed to confirm its category and its clients' categories under section 6A, such
-as an extract from a business register. The Licensor uses this only to check compliance with this license.
+The Membership, as recorded by Patreon, is the proof of license, including which months were paid. A private or
+hidden membership counts. The Licensee gives the Licensor the Patreon account that holds the Membership and its
+legal name on request, so the Licensor can check. The Licensee keeps its own record of its Paid Months. The
+privacy notice at https://supprocom.github.io/privacy/ explains how the Licensor uses personal data it receives
+from Patreon or the Licensee.
 
 ## 10. Category
 
 A Licensee that is an Enterprise may not license at the Small Licensee amount. A Small Licensee that becomes an
 Enterprise needs the Enterprise amount for the months after the change. A person who works for an Enterprise is
-covered for that work only by the Enterprise's Sponsorship.
-
-A Licensee that paid less than its category, or that delivered to a client in breach of section 6A, owes the
-Licensor the difference between the amount it should have paid and the amount it paid, for every month
-concerned, with statutory default interest from the day each month's amount was due. Payment of the difference
-and the interest makes those months licensed.
+covered for that work only by the Enterprise's Membership.
 
 ## 11. Rights the law gives you anyway
 
-Nothing in this license limits what a lawful user of a computer program may do without the Licensor's
-permission under Articles 5(2), 5(3) and 6 of Directive 2009/24/EC and the Croatian Copyright and Related Rights
-Act (making a back-up copy, observing, studying and testing the program, and decompiling for interoperability).
-The author's moral rights are not affected.
+Nothing in this license limits what the law allows without the Licensor's permission under Articles 5(2), 5(3)
+and 6 of Directive 2009/24/EC, Article 3 of Directive (EU) 2019/790 and the Croatian Copyright and Related Rights
+Act that implements them: making a back-up copy, observing, studying and testing the program, decompiling for
+interoperability, and text and data mining for scientific research by research organisations and cultural
+heritage institutions. The author's moral rights are not affected.
 
 ## 12. Warranty and security updates
 
@@ -172,6 +161,9 @@ The author's moral rights are not affected.
 3. A security update to a Version is licensed, at no charge, to every Licensee licensed for that Version,
    including under a perpetual license. Where the Licensor fixes a vulnerability only in a later Version, every
    such Licensee may use that later Version under this license, free of charge, in place of the earlier one.
+4. Nothing in this license limits the Licensor's obligations as manufacturer under Regulation (EU) 2024/2847
+   (Cyber Resilience Act), including handling and reporting vulnerabilities. The support period in point 2 is the
+   support period the Licensor sets under that Regulation.
 
 ## 13. Limitation of liability
 
@@ -185,10 +177,16 @@ The author's moral rights are not affected.
 ## 14. Changes
 
 The Licensor may publish new versions of this license. A new version governs only Versions of the Software
-released with it; earlier Versions stay under the text they were released with. The Licensor may also change
+released with it, and earlier Versions where it says so (as section 4.1 does); earlier Versions otherwise stay
+under the text they were released with. The Licensor may also change
 the amounts. A new amount applies from the Licensee's next Paid Month at least 30 days after the Licensor
-announces it in the repositories and on the Sponsors page. No change takes away a perpetual license already
-granted to a Fallback Version. A Licensee that doesn't accept a change may end its Sponsorship, and section 7 applies.
+announces it in the repositories and on the Patreon page. No change takes away a perpetual license already
+granted to a Fallback Version. A Licensee that doesn't accept a change may end its Membership, and section 7
+applies.
+
+The Licensor may retire any tier, or stop offering Memberships, at any time and without notice. A Membership that
+continues on a retired tier stays a Membership. A Membership that ends because its tier is retired ends as under
+section 7.
 
 ## 15. Severability
 
@@ -213,8 +211,7 @@ English text prevails.
 
 This license covers only the parts of the Software in which the Licensor holds the rights. Third-party
 components included in or required by the Software stay under their own licenses, which the Licensee follows.
-A project's package dependencies show which
-third-party components it requires.
+A project's package dependencies show which third-party components it requires.
 
 ## 19. Sanctions
 
@@ -223,18 +220,16 @@ The Licensee confirms that it, its owners and its clients are not subject to Eur
 untrue or stops being true, the Licensor may end this license at once, including any perpetual license under
 section 5.
 
-## 20. Payments and taxes
+## 20. Payments, taxes and invoices
 
-1. Amounts are in US dollars and are paid through GitHub Sponsors. They include value added tax (VAT) where VAT
-   applies.
-2. Months already paid and donations under section 0.4 are not refunded, including when the license ends under
-   section 8 or 19.
-3. Invoices are issued in euros. Amounts in US dollars are converted at the exchange rate of the Croatian
-   National Bank (HNB) on the invoice date.
-4. A Licensee established in another EU Member State is invoiced under the reverse charge only if, before the
-   invoice date, it gave its VAT identification number under section 0.1 and asked in writing for the reverse
-   charge to be applied. Otherwise the Licensor charges Croatian VAT, included in the amounts under point 1.
-5. Where the Licensor owes the Licensee any refund, it pays it by bank transfer to the account (IBAN) the
+1. Patreon is the merchant of record for the Membership. It sells the Membership, bills it as the billing entity,
+   accounts for the VAT and other taxes on it as the law requires, and issues the Licensee's invoice or
+   receipt. The Licensor does not invoice the
+   Licensee and is not a party to the payment.
+2. The Licensor's own supply is to Patreon, and the Licensor invoices Patreon for it.
+3. Months already paid are not refunded by the Licensor, including when the license ends under section 8 or 19.
+   Any refund by Patreon follows Patreon's terms.
+4. Where the Licensor owes the Licensee any refund, it pays it by bank transfer to the account (IBAN) the
    Licensee gives in writing. The Licensee is liable for the account details being correct.
 
 ## 21. Transfer
@@ -242,7 +237,7 @@ section 5.
 1. The Licensor may transfer its rights and obligations under this license to a successor, such as a company
    that takes over its business. The Licensor tells Licensees of the transfer in the repositories.
 2. When a Licensee merges, or its business is acquired as a whole, this license passes to the successor. The
-   successor keeps the Sponsorship at the amount for its own category from the next month.
+   successor keeps the Membership at the amount for its own category from the next month.
 
 ## 22. No trademark rights
 
@@ -256,12 +251,12 @@ the Software infringes their rights. Section 13.3 still applies.
 
 ## 24. Survival
 
-After this license ends, these continue: section 0.2 on invoicing details, any perpetual license under section 5,
-sections 7.3 and 8 on copies already delivered, section 10 on amounts owed, and sections 11 to 13, 15 to 18, 22 and
-23.
+After this license ends, these continue: any perpetual license under section 5, sections 7.3 and 8 on copies
+already delivered, and sections 11 to 13, 15 to 18, 22 and 23.
 
 ## 25. Whole agreement
 
-This license is the whole agreement between the Licensor and the Licensee about the Software under this license.
-Where the Licensee uses the Software under this license, it replaces the AGPL-3.0 for that use. Copies the
-Licensee obtained and uses under the AGPL-3.0 stay under the AGPL-3.0.
+This license and, for the Membership, Patreon's terms are the whole agreement between the Licensor and the
+Licensee about the Software under this license. Where the Licensee uses the Software under this license, it
+replaces the AGPL-3.0 for that use. Copies the Licensee obtained and uses under the AGPL-3.0 stay under the
+AGPL-3.0.
